@@ -1,5 +1,6 @@
 import cv2
 import mediapipe as mp
+import numpy as np
 import random
 import time
 
@@ -9,34 +10,37 @@ hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 mp_draw = mp.solutions.drawing_utils
 
 # Game variables
-base_bubble_size = 30
-base_bubble_speed = 3
+bubble_size = 30
+base_speed = 3
 score = 0
+missed_bubbles = 0
+max_misses = 15
 bubbles = []
-base_basket_width = 120
-basket_height = 25
-last_bubble_time = time.time()
+basket_width = 100
+basket_height = 20
+level = 1
+spawn_interval = 0.5  # Initial bubble spawn interval
+speed_increase_interval = 30  # Points needed to increase difficulty
 
 # Initialize webcam
 cap = cv2.VideoCapture(0)
-cv2.namedWindow("Bubble Catching Game+", cv2.WINDOW_NORMAL)
+cv2.namedWindow("Bubble Catching Game", cv2.WINDOW_NORMAL)
 
-def create_bubble(frame_width, level):
-    size = max(15, base_bubble_size - (level // 2))
-    x = random.randint(size, frame_width - size)
-    color = (255, 0, 255)  # Default pink
-    if level >= 6:
-        color = (0, 0, 255)  # Red
-    elif level >= 3:
-        color = (0, 255, 0)  # Green
-    return {'pos': [x, 0], 'active': True, 'size': size, 'color': color}
+def create_bubble(frame_width):
+    x = random.randint(bubble_size, frame_width - bubble_size)
+    return {'pos': [x, 0], 'active': True, 'speed': base_speed + (level * 0.3)}
 
 def reset_game():
-    global score, bubbles
+    global score, missed_bubbles, bubbles, level, spawn_interval
     score = 0
+    missed_bubbles = 0
     bubbles = []
+    level = 1
+    spawn_interval = 0.5
 
 reset_game()
+last_bubble_time = time.time()
+performance_history = []
 
 while True:
     success, img = cap.read()
@@ -48,13 +52,6 @@ while True:
     rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_img)
     
-    # Calculate difficulty level based on score
-    current_level = score // 50
-    bubble_speed = base_bubble_speed + current_level * 0.7
-    spawn_interval = max(0.1, 0.5 - current_level * 0.03)
-    max_bubbles = 10 + current_level * 3
-    basket_width = max(40, base_basket_width - current_level * 8)
-    
     hand_x = None
     if results.multi_hand_landmarks:
         for hand_landmark in results.multi_hand_landmarks:
@@ -62,63 +59,75 @@ while True:
             hand_x = int(index_finger.x * w)
             mp_draw.draw_landmarks(img, hand_landmark, mp_hands.HAND_CONNECTIONS)
 
-    # Create new bubbles
-    if time.time() - last_bubble_time > spawn_interval and len(bubbles) < max_bubbles:
-        bubbles.append(create_bubble(w, current_level))
+    # Dynamic difficulty adjustment
+    if score > level * speed_increase_interval:
+        level += 1
+        spawn_interval = max(0.2, spawn_interval * 0.9)  # Faster spawning
+        performance_history.clear()
+
+    # Create new bubbles with dynamic intervals
+    if time.time() - last_bubble_time > spawn_interval:
+        bubbles.append(create_bubble(w))
         last_bubble_time = time.time()
 
-    # Update bubble positions
-    bubbles_to_remove = []
-    for bubble in bubbles:
-        if bubble['active']:
-            bubble['pos'][1] += bubble_speed
-            
-            # Check collision with basket
-            if hand_x and (bubble['pos'][1] + bubble['size'] > h - basket_height):
-                basket_left = hand_x - basket_width//2
-                basket_right = hand_x + basket_width//2
-                if basket_left < bubble['pos'][0] < basket_right:
-                    score += 10 + current_level  # Bonus points at higher levels
-                    bubble['active'] = False
-                    
-            # Draw bubble
-            if bubble['active']:
-                cv2.circle(img, tuple(bubble['pos']), bubble['size'], bubble['color'], -1)
-                cv2.circle(img, tuple(bubble['pos']), bubble['size'], (255, 255, 255), 2)
-                
-            # Check if missed
-            if bubble['pos'][1] - bubble['size'] > h:
-                score = max(0, score - (5 + current_level))  # Increasing penalty
-                bubbles_to_remove.append(bubble)
+    # Track active bubbles
+    active_bubbles = [b for b in bubbles if b['active']]
+    bubbles = active_bubbles  # Remove inactive bubbles
 
-    # Remove missed bubbles
-    for bubble in bubbles_to_remove:
-        bubbles.remove(bubble)
+    # Update bubble positions
+    for bubble in bubbles:
+        bubble['pos'][1] += bubble['speed']
+        
+        # Catch detection
+        if hand_x and (bubble['pos'][1] + bubble_size > h - basket_height):
+            if (bubble['pos'][0] > hand_x - basket_width//2 and 
+                bubble['pos'][0] < hand_x + basket_width//2):
+                score += 10
+                bubble['active'] = False
+                performance_history.append(1)  # Track successes
+        
+        # Miss detection
+        if bubble['pos'][1] > h:
+            missed_bubbles += 1
+            bubble['active'] = False
+            performance_history.append(0)  # Track misses
+        
+        # Draw active bubbles
+        if bubble['active']:
+            # Fix: Ensure center coordinates are integers
+            cv2.circle(img, (int(bubble['pos'][0]), int(bubble['pos'][1])), bubble_size, (255, 0, 255), -1)
+
+    # Adaptive difficulty based on performance (last 10 catches)
+    recent_performance = performance_history[-10:]
+    if len(recent_performance) > 5:
+        success_rate = sum(recent_performance)/len(recent_performance)
+        # Auto-adjust speed based on player skill
+        if success_rate > 0.7:  # Player is doing well
+            base_speed = min(8, base_speed + 0.1)
+        elif success_rate < 0.3:  # Player struggling
+            base_speed = max(3, base_speed - 0.1)
 
     # Draw basket
     if hand_x:
-        basket_top = h - basket_height
         cv2.rectangle(img, 
-                     (hand_x - basket_width//2, basket_top),
+                     (hand_x - basket_width//2, h - basket_height),
                      (hand_x + basket_width//2, h), 
                      (0, 255, 0), -1)
-        # Basket outline
-        cv2.rectangle(img, 
-                     (hand_x - basket_width//2, basket_top),
-                     (hand_x + basket_width//2, h), 
-                     (50, 50, 50), 2)
 
-    # Display game info
+    # Game HUD
     cv2.putText(img, f"Score: {score}", (10, 30), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    cv2.putText(img, f"Level: {current_level}", (w - 150, 30), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
-    cv2.putText(img, f"Speed: x{bubble_speed:.1f}", (10, 65), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 255), 1)
-    cv2.putText(img, f"Basket: {basket_width}px", (w - 150, 65), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 255, 200), 1)
+               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(img, f"Missed: {missed_bubbles}/{max_misses}", (10, 60), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(img, f"Level: {level}", (w-150, 30), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-    cv2.imshow("Bubble Catching Game+", img)
+    # Game over check
+    if missed_bubbles >= max_misses:
+        cv2.putText(img, "GAME OVER! Press 'R' to restart", (50, h//2), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+    cv2.imshow("Bubble Catching Game", img)
 
     key = cv2.waitKey(1)
     if key == ord('q'):
