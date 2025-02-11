@@ -20,7 +20,7 @@ mp_drawing = mp.solutions.drawing_utils
 # ----- Game Parameters -----
 window_width, window_height = 1200, 720
 ball_radius = 20
-ball_speed = [50, 50]
+ball_speed = [20, 20]
 ball_position = [window_width // 2, window_height // 2]
 default_ball_color = (0, 255, 0)   # Green normally
 hit_flash_color = (255, 0, 0)        # Red flash on hit
@@ -146,7 +146,7 @@ while True:
                 # Both hands detected continuously; start the game.
                 score = [0, 0]
                 ball_position = [window_width // 2, window_height // 2]
-                ball_speed = [10, 10]
+                ball_speed = [20, 20]
                 game_state = "PLAYING"
                 start_gesture_start_time = None
         else:
@@ -227,7 +227,7 @@ while True:
             elif current_time - restart_gesture_start_time >= gesture_required_duration:
                 score = [0, 0]
                 ball_position = [window_width // 2, window_height // 2]
-                ball_speed = [10, 10]
+                ball_speed = [20, 20]
                 game_state = "PLAYING"
                 restart_gesture_start_time = None
         else:
