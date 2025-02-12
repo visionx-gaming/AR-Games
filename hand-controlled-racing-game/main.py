@@ -9,12 +9,20 @@ mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 mp_draw = mp.solutions.drawing_utils
 
+# Load assets
+car_img = cv2.imread('assets/car.png')  # Player's car
+obstacle_img = cv2.imread('assets/obstacle.png')  # Opponent cars
+background_img = cv2.imread('assets/road.png')  # Road background
+
+# Resize assets
+car_width, car_height = 60, 80
+obstacle_width, obstacle_height = 60, 80
+car_img = cv2.resize(car_img, (car_width, car_height))
+obstacle_img = cv2.resize(obstacle_img, (obstacle_width, obstacle_height))
+background_img = cv2.resize(background_img, (640, 480))  # Adjust size to fit window
+
 # Game variables
-car_width = 60
-car_height = 80
 lane_width = 100
-obstacle_width = 60
-obstacle_height = 80
 base_speed = 5
 score = 0
 level = 1
@@ -50,6 +58,9 @@ while True:
 
     img = cv2.flip(img, 1)
     h, w, _ = img.shape
+    img = cv2.resize(img, (640, 480))
+    img = cv2.addWeighted(img, 0.5, background_img, 0.5, 0)  # Overlay background
+
     rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_img)
     
@@ -89,14 +100,11 @@ while True:
         
         if obs['active']:
             active_obstacles.append(obs)
-            cv2.rectangle(img, (int(obs['pos'][0]), int(obs['pos'][1])), 
-                          (int(obs['pos'][0] + obstacle_width), int(obs['pos'][1] + obstacle_height)), 
-                          (0, 0, 255), -1)
+            img[obs['pos'][1]:obs['pos'][1]+obstacle_height, obs['pos'][0]:obs['pos'][0]+obstacle_width] = obstacle_img
     obstacles = active_obstacles
 
     # Draw car (controlled by hand position)
-    cv2.rectangle(img, (int(hand_x - car_width // 2), int(h - car_height)),
-                  (int(hand_x + car_width // 2), int(h)), (0, 255, 0), -1)
+    img[h - car_height:h, hand_x - car_width // 2:hand_x + car_width // 2] = car_img
 
     # Game HUD
     cv2.putText(img, f"Score: {score}", (10, 30), 
