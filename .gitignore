@@ -1,0 +1,18 @@
+.venv
+venv
+*.pyc
+*.env
+*.ipynb
+output
+ncampvenv
+vrevamp
+interface
+# Python build directories
+build/
+dist/
+*.egg-info/
+
+# Compiled files
+__pycache__/
+*.pyc
+*.pyo
