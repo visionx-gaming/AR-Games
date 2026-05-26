@@ -1,244 +1,256 @@
+"""Hand Pong — Main entry point and game loop.
+
+An AR ping-pong game controlled by hand gestures via webcam.
+Run:  python main.py
+"""
+
 import cv2
 import numpy as np
-import mediapipe as mp
 import pygame
 import time
 
-# ----- Initialize Pygame for sound -----
+from game.config import WINDOW_WIDTH, WINDOW_HEIGHT, get_theme
+from game.state import GameState
+from game.sound import SoundManager
+from game.stats import load_stats
+from game.hand_tracking import HandTracker
+from game.utils import detect_screen_resolution, letterbox_frame
+from game import effects, renderer
+from game.handlers import FrameCtx, handle_start, handle_settings, handle_countdown
+from game.handlers import handle_playing, handle_paused, handle_gameover, handle_menu
+
+# =====================================================================
+#  INITIALIZATION
+# =====================================================================
 pygame.init()
-pygame.mixer.init()
-hit_sound = pygame.mixer.Sound("hit.wav")
-lose_sound = pygame.mixer.Sound("lose.mp3")
-hit_sound.set_volume(1.0)
-lose_sound.set_volume(1.0)
+sound_mgr = SoundManager()
+stats = load_stats()
+state = GameState()
 
-# ----- Initialize Mediapipe Hand Tracking -----
-mp_hands = mp.solutions.hands
-hands_detector = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
-mp_drawing = mp.solutions.drawing_utils
+state.high_score = max(
+    stats.get("high_score_classic", 0),
+    stats.get("high_score_survival", 0),
+    stats.get("high_score_time_attack", 0),
+)
 
-# ----- Game Parameters -----
-window_width, window_height = 1200, 720
-ball_radius = 20
-ball_speed = [20, 20]
-ball_position = [window_width // 2, window_height // 2]
-default_ball_color = (0, 255, 0)   # Green normally
-hit_flash_color = (255, 0, 0)        # Red flash on hit
+screen_width, screen_height = detect_screen_resolution()
 
-rod_height = 150
-rod_width = 20
-# For hand control, rod x-positions remain fixed:
-left_rod_x = 10
-right_rod_x = window_width - 10
+cv2.namedWindow("Game", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("Game", WINDOW_WIDTH, WINDOW_HEIGHT)
+is_fullscreen = False
 
-# Score tracking and high score
-score = [0, 0]  # [left, right]
-high_score = 0
 
-# Game states: "START", "PLAYING", "PAUSED", "GAMEOVER"
-game_state = "START"
+class _MouseState:
+    __slots__ = ("raw_pos", "clicked", "right_clicked")
 
-# Hit flash timing
-hit_animation_time = 0
-hit_flash_duration = 0.2  # seconds
+    def __init__(self):
+        self.raw_pos = (-1, -1)
+        self.clicked = False
+        self.right_clicked = False
 
-# Variables to track gesture timing in START and GAMEOVER states
-restart_gesture_start_time = None
-start_gesture_start_time = None
-# Time (in seconds) both hands must be detected to trigger a state change
-gesture_required_duration = 1.0
 
-# ----- OpenCV Video Capture -----
+_mouse = _MouseState()
+
+
+def _mouse_cb(event, x, y, flags, param):
+    _mouse.raw_pos = (x, y)
+    if event == cv2.EVENT_LBUTTONDOWN:
+        _mouse.clicked = True
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        _mouse.right_clicked = True
+
+
+cv2.setMouseCallback("Game", _mouse_cb)
+
+
+def _to_game_coords(rx, ry, is_fs, sw, sh):
+    """Map raw window mouse coords to game-frame coords (handles letterbox)."""
+    if not is_fs or sw <= 0 or sh <= 0:
+        return rx, ry
+    scale = min(sw / WINDOW_WIDTH, sh / WINDOW_HEIGHT)
+    if scale <= 0:
+        return rx, ry
+    x_off = (sw - int(WINDOW_WIDTH * scale)) // 2
+    y_off = (sh - int(WINDOW_HEIGHT * scale)) // 2
+    return int((rx - x_off) / scale), int((ry - y_off) / scale)
+
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, window_width)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, window_height)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 60)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+tracker = HandTracker()
+tracker.start()
+
+scanline_overlay = renderer.create_scanline_overlay()
+vignette_overlay = renderer.create_vignette()
+glow_layer = np.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=np.uint8)
 
 last_time = time.time()
+frame_count = 0
+fps_display = 0
+fps_update_time = time.time()
+pump_counter = 0
 
-# ----- Helper functions for overlays -----
-def show_start_screen(frame):
-    cv2.putText(frame, "Welcome to Hand-Controlled Pong!", (window_width // 4, window_height // 3),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    cv2.putText(frame, "Wave both hands to Start", (window_width // 4, window_height // 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-    cv2.putText(frame, "High Score: {}".format(high_score), (window_width // 4, window_height // 2 + 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-    return frame
+_HANDLERS = {
+    "START":     handle_start,
+    "SETTINGS":  handle_settings,
+    "COUNTDOWN": handle_countdown,
+    "PLAYING":   handle_playing,
+    "PAUSED":    handle_paused,
+    "GAMEOVER":  handle_gameover,
+    "MENU":      handle_menu,
+}
 
-def show_pause_screen(frame):
-    cv2.putText(frame, "Game Paused", (window_width // 3, window_height // 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(frame, "Press 'R' to Resume", (window_width // 3, window_height // 2 + 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    return frame
-
-def show_game_over_screen(frame, winner):
-    cv2.putText(frame, "Game Over!", (window_width // 3, window_height // 3),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(frame, "{} Wins!".format(winner), (window_width // 3, window_height // 3 + 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(frame, "Score: Left {}  Right {}".format(score[0], score[1]),
-                (window_width // 3, window_height // 3 + 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-    cv2.putText(frame, "High Score: {}".format(high_score),
-                (window_width // 3, window_height // 3 + 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-    cv2.putText(frame, "Wave both hands to Restart", (window_width // 3, window_height // 3 + 200),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    return frame
-
-def detect_hand_position(image, results):
-    # Returns the center (x, y) of the detected hand for each side if available.
-    hand_positions = {"Left": None, "Right": None}
-    if results.multi_hand_landmarks:
-        for hand_landmarks, hand_class in zip(results.multi_hand_landmarks, results.multi_handedness):
-            x_coords = [lm.x for lm in hand_landmarks.landmark]
-            y_coords = [lm.y for lm in hand_landmarks.landmark]
-            center = (int(np.mean(x_coords) * window_width), int(np.mean(y_coords) * window_height))
-            label = hand_class.classification[0].label
-            hand_positions[label] = center
-    return hand_positions
-
-# ----- Main Game Loop -----
+# =====================================================================
+#  MAIN GAME LOOP
+# =====================================================================
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
     frame = cv2.flip(frame, 1)
-    frame = cv2.resize(frame, (window_width, window_height))
+    h, w = frame.shape[:2]
+    if w != WINDOW_WIDTH or h != WINDOW_HEIGHT:
+        frame = cv2.resize(frame, (WINDOW_WIDTH, WINDOW_HEIGHT))
+
     current_time = time.time()
-    dt = current_time - last_time
+    dt = min(current_time - last_time, 0.1)
     last_time = current_time
+    state.current_time = current_time
+    state.dt = dt
 
-    key = cv2.waitKey(1) & 0xFF
+    key_raw = cv2.waitKeyEx(1)
+    key = key_raw & 0xFF if key_raw != -1 else 255
 
-    # Process Mediapipe hand detection in states where gesture is needed.
-    if game_state in ["START", "PLAYING", "GAMEOVER"]:
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands_detector.process(rgb_frame)
-        hand_pos = detect_hand_position(rgb_frame, results)
+    # Consume and transform mouse events for this frame
+    _mrx, _mry = _mouse.raw_pos
+    mouse_game_pos = _to_game_coords(_mrx, _mry, is_fullscreen, screen_width, screen_height)
+    mouse_clicked = _mouse.clicked
+    mouse_right_clicked = _mouse.right_clicked
+    _mouse.clicked = False
+    _mouse.right_clicked = False
+
+    frame_count += 1
+    if current_time - fps_update_time >= 0.5:
+        fps_display = frame_count / (current_time - fps_update_time)
+        frame_count = 0
+        fps_update_time = current_time
+
+    state.fist_pause_cooldown = max(0, state.fist_pause_cooldown - dt)
+    state.bg_offset += dt * 25
+    state.bg_pulse += dt
+
+    state_at_frame_start = state.game_state
+
+    if state.game_state in ("START", "COUNTDOWN", "PLAYING", "GAMEOVER"):
+        tracker.send_frame(frame)
+    hand_pos, hand_lm, fist_state = tracker.get_results()
+    state.hand_pos = hand_pos
+    state.hand_landmarks = hand_lm
+    state.fist_state = fist_state
+
+    theme = get_theme(state.settings)
+    glow_layer[:] = 0
+
+    ctx = FrameCtx(
+        frame=frame,
+        theme=theme,
+        hand_pos=hand_pos,
+        fist_state=fist_state,
+        key=key,
+        key_raw=key_raw,
+        current_time=current_time,
+        dt=dt,
+        glow_layer=glow_layer,
+        mp_hand_connections=tracker.mp_hand_connections,
+        mouse_pos=mouse_game_pos,
+        mouse_clicked=mouse_clicked,
+        mouse_right_clicked=mouse_right_clicked,
+    )
+
+    # Dispatch to the appropriate state handler
+    handler = _HANDLERS.get(state.game_state)
+    if handler:
+        if state.game_state == "START":
+            handler(ctx, state, stats, sound_mgr, tracker)
+        elif state.game_state == "SETTINGS":
+            handler(ctx, state, sound_mgr)
+        elif state.game_state == "COUNTDOWN":
+            handler(ctx, state, tracker)
+        elif state.game_state == "PLAYING":
+            handler(ctx, state, sound_mgr, tracker)
+        elif state.game_state == "PAUSED":
+            handler(ctx, state, sound_mgr)
+        elif state.game_state == "GAMEOVER":
+            handler(ctx, state, stats, sound_mgr)
+        elif state.game_state == "MENU":
+            handler(ctx, state, sound_mgr)
+
+    # =================================================================
+    #  POST-PROCESSING
+    # =================================================================
+    shake_x, shake_y = effects.get_screen_shake_offset(state)
+    if shake_x != 0 or shake_y != 0:
+        frame = effects.apply_screen_shake(frame, shake_x, shake_y)
+
+    renderer.apply_post_processing(frame, scanline_overlay, vignette_overlay)
+    renderer.draw_global_hud(frame, fps_display)
+    renderer.draw_mouse_cursor(frame, mouse_game_pos)
+
+    if is_fullscreen and screen_width > 0 and screen_height > 0:
+        display_frame = letterbox_frame(frame, screen_width, screen_height)
     else:
-        hand_pos = {"Left": None, "Right": None}
+        display_frame = frame
+    cv2.imshow("Game", display_frame)
 
-    # Update rod positions in PLAYING state using detected hand positions.
-    if game_state == "PLAYING":
-        if hand_pos["Left"]:
-            left_rod_y = hand_pos["Left"][1] - rod_height // 2
+    pump_counter += 1
+    if pump_counter % 10 == 0:
+        pygame.event.pump()
+
+    if key in (ord('f'), ord('F')):
+        is_fullscreen = not is_fullscreen
+        if is_fullscreen:
+            cv2.setWindowProperty("Game", cv2.WND_PROP_FULLSCREEN,
+                                  cv2.WINDOW_FULLSCREEN)
         else:
-            left_rod_y = window_height // 2 - rod_height // 2
+            cv2.setWindowProperty("Game", cv2.WND_PROP_FULLSCREEN,
+                                  cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Game", WINDOW_WIDTH, WINDOW_HEIGHT)
 
-        if hand_pos["Right"]:
-            right_rod_y = hand_pos["Right"][1] - rod_height // 2
-        else:
-            right_rod_y = window_height // 2 - rod_height // 2
-    else:
-        # For non-playing states, center the rods.
-        left_rod_y = window_height // 2 - rod_height // 2
-        right_rod_y = window_height // 2 - rod_height // 2
-
-    # ----- Game State Management -----
-    if game_state == "START":
-        frame = show_start_screen(frame)
-        # Instead of pressing 'S', check if both hands are detected.
-        if hand_pos["Left"] is not None and hand_pos["Right"] is not None:
-            if start_gesture_start_time is None:
-                start_gesture_start_time = current_time
-            elif current_time - start_gesture_start_time >= gesture_required_duration:
-                # Both hands detected continuously; start the game.
-                score = [0, 0]
-                ball_position = [window_width // 2, window_height // 2]
-                ball_speed = [20, 20]
-                game_state = "PLAYING"
-                start_gesture_start_time = None
-        else:
-            start_gesture_start_time = None
-
-    elif game_state == "PLAYING":
-        # Update ball position
-        ball_position[0] += ball_speed[0]
-        ball_position[1] += ball_speed[1]
-
-        # Collision with top and bottom
-        if ball_position[1] <= ball_radius or ball_position[1] >= window_height - ball_radius:
-            ball_speed[1] = -ball_speed[1]
-
-        # Collision with left rod (using hand-controlled left_rod_y)
-        if (ball_position[0] - ball_radius <= left_rod_x + rod_width and
-            left_rod_y <= ball_position[1] <= left_rod_y + rod_height):
-            ball_speed[0] = -ball_speed[0]
-            hit_sound.play()
-            hit_animation_time = current_time
-            score[0] += 1  # Left player's score increases on hit
-        elif ball_position[0] - ball_radius <= 0:
-            lose_sound.play()
-            game_state = "GAMEOVER"
-            winner = "Right"
-            if max(score) > high_score:
-                high_score = max(score)
-            restart_gesture_start_time = None
-
-        # Collision with right rod (using hand-controlled right_rod_y)
-        if (ball_position[0] + ball_radius >= right_rod_x - rod_width and
-            right_rod_y <= ball_position[1] <= right_rod_y + rod_height):
-            ball_speed[0] = -ball_speed[0]
-            hit_sound.play()
-            hit_animation_time = current_time
-            score[1] += 1  # Right player's score increases on hit
-        elif ball_position[0] + ball_radius >= window_width:
-            lose_sound.play()
-            game_state = "GAMEOVER"
-            winner = "Left"
-            if max(score) > high_score:
-                high_score = max(score)
-            restart_gesture_start_time = None
-
-        # Visual hit feedback: flash ball color if hit occurred recently
-        if current_time - hit_animation_time < hit_flash_duration:
-            current_ball_color = hit_flash_color
-        else:
-            current_ball_color = default_ball_color
-
-        # Draw game objects
-        cv2.circle(frame, tuple(ball_position), ball_radius, current_ball_color, -1)
-        cv2.rectangle(frame, (left_rod_x, left_rod_y),
-                      (left_rod_x + rod_width, left_rod_y + rod_height), (255, 0, 0), -1)
-        cv2.rectangle(frame, (right_rod_x - rod_width, right_rod_y),
-                      (right_rod_x, right_rod_y + rod_height), (0, 0, 255), -1)
-
-        # Draw scoreboard
-        cv2.putText(frame, f"Left: {score[0]}", (50, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        cv2.putText(frame, f"Right: {score[1]}", (window_width - 200, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-
-        if key == ord('p') or key == ord('P'):
-            game_state = "PAUSED"
-
-    elif game_state == "PAUSED":
-        frame = show_pause_screen(frame)
-        if key == ord('r') or key == ord('R'):
-            game_state = "PLAYING"
-
-    elif game_state == "GAMEOVER":
-        frame = show_game_over_screen(frame, winner)
-        # Restart Gesture Detection: require both hands detected for a set duration.
-        if hand_pos["Left"] is not None and hand_pos["Right"] is not None:
-            if restart_gesture_start_time is None:
-                restart_gesture_start_time = current_time
-            elif current_time - restart_gesture_start_time >= gesture_required_duration:
-                score = [0, 0]
-                ball_position = [window_width // 2, window_height // 2]
-                ball_speed = [20, 20]
-                game_state = "PLAYING"
-                restart_gesture_start_time = None
-        else:
-            restart_gesture_start_time = None
-
-    cv2.imshow("Game", frame)
-    pygame.event.pump()
+    # QUIT sentinel set by "Quit Game" menu option
+    if state.game_state == "QUIT":
+        break
 
     if key == ord('q'):
         break
 
+    if key == 27:
+        if state_at_frame_start in ("PLAYING", "PAUSED", "COUNTDOWN"):
+            # Open in-game menu instead of quitting
+            state.previous_state = state_at_frame_start
+            state.menu_selection = 0
+            state.game_state = "MENU"
+        elif state_at_frame_start == "GAMEOVER":
+            state.game_state = "START"
+        elif state_at_frame_start == "START":
+            break
+        # SETTINGS ESC is handled inside handle_settings → no action needed here
+
+    try:
+        if cv2.getWindowProperty("Game", cv2.WND_PROP_VISIBLE) < 1:
+            break
+    except cv2.error:
+        break
+
+# =====================================================================
+#  CLEANUP
+# =====================================================================
+sound_mgr.stop_bgm()
+tracker.stop()
 cap.release()
 cv2.destroyAllWindows()
+sound_mgr.cleanup()
 pygame.quit()
