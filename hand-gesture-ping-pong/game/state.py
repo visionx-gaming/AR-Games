@@ -171,6 +171,9 @@ class GameState:
         # --- Stats bookkeeping ---
         self.stats_saved = False
 
+        # --- UI flags ---
+        self.show_exit_confirm = False
+
     def reset_for_new_game(self):
         """Reset state for a new game while keeping settings."""
         self.score = [0, 0]

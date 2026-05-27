@@ -18,6 +18,16 @@ from game.stats import save_settings
 #  START SCREEN
 # ===================================================================
 
+_MODE_DESCS = [
+    "First to score wins",
+    "Survive as long as possible",
+    "Most points in 60 seconds",
+]
+_PLAYER_NAMES = ["2  PLAYER", "VS  AI"]
+_PLAYER_DESCS = ["Both hands  ·  local co-op", "Left hand  ·  CPU plays right"]
+_PLAYER_SEL_COLS = [(0, 200, 80), (0, 80, 255)]   # green / red-orange (BGR)
+
+
 def show_start_screen(frame, state, stats):
     """Arcade-style title screen."""
     theme = get_theme(state.settings)
@@ -29,39 +39,98 @@ def show_start_screen(frame, state, stats):
     draw_neon_line(frame, 40, 48, WINDOW_WIDTH - 40, 48, tc, 2)
 
     # ── TITLE ─────────────────────────────────────────────────────
-    draw_arcade_text(frame, "HAND  PONG", cx, 155, 3.6, (0, 255, 200), thickness=5)
+    draw_arcade_text(frame, "HAND  PONG", cx, 116, 2.8, (0, 255, 200), thickness=5)
     draw_arcade_text(frame, "AR PING PONG  *  HAND GESTURE CONTROL",
-                     cx, 198, 0.70, scale_color(tc, 0.75), thickness=1, shadow=False)
+                     cx, 152, 0.64, scale_color(tc, 0.75), thickness=1, shadow=False)
 
     # ── Divider ───────────────────────────────────────────────────
-    draw_neon_line(frame, 100, 222, WINDOW_WIDTH - 100, 222, tc, 1)
+    draw_neon_line(frame, 100, 172, WINDOW_WIDTH - 100, 172, tc, 1)
 
     # ── START PROMPT (pulsing) ────────────────────────────────────
     p1 = 0.5 + 0.5 * math.sin(state.current_time * 2.5)
     sc = (int(0 * p1), int(255 * (0.5 + 0.5 * p1)), int(255 * (0.5 + 0.5 * p1)))
     draw_arcade_text(frame, ">>  PRESS  SPACE  TO  START  <<",
-                     cx, 290, 1.22, sc, thickness=3)
-
-    # ── OR divider ────────────────────────────────────────────────
-    draw_arcade_text(frame, "-  OR  -", cx, 330, 0.60,
-                     (75, 75, 75), thickness=1, shadow=False)
-
-    # ── GESTURE PROMPT ────────────────────────────────────────────
-    p2 = 0.45 + 0.55 * abs(math.sin(state.current_time * 1.8))
-    wc = (int(220 * p2), int(220 * p2), 0)
-    draw_arcade_text(frame, "WAVE BOTH HANDS", cx, 368, 0.95, wc,
-                     thickness=2, shadow=False)
+                     cx, 205, 1.22, sc, thickness=3)
 
     if state.start_gesture_time is not None:
-        _draw_gesture_arc(frame, cx, 405,
+        _draw_gesture_arc(frame, cx, 236,
                           state.current_time - state.start_gesture_time)
+
+    # ── MODE SELECTOR ─────────────────────────────────────────────
+    draw_arcade_text(frame, "SELECT  GAME  MODE", cx, 258,
+                     0.60, scale_color(tc, 0.72), thickness=1, shadow=False)
+
+    s = state.settings
+    current_mode = s["game_mode"]
+    card_w, card_h = 340, 80
+    card_gap = 15
+    total_cw = 3 * card_w + 2 * card_gap
+    x0 = cx - total_cw // 2
+
+    for i in range(3):
+        x1 = x0 + i * (card_w + card_gap)
+        y1 = 270
+        cx_c = x1 + card_w // 2
+        selected = i == current_mode
+        fill = scale_color(tc, 0.07) if selected else (6, 6, 16)
+        bdr = tc if selected else scale_color(tc, 0.28)
+        draw_panel(frame, x1, y1, card_w, card_h, bdr, fill=fill)
+        nm_col = (0, 255, 255) if selected else scale_color(tc, 0.50)
+        draw_arcade_text(frame, GAME_MODE_NAMES[i], cx_c, y1 + 36,
+                         0.85 if selected else 0.76, nm_col,
+                         thickness=2 if selected else 1)
+        desc_col = (145, 145, 145) if selected else (72, 72, 72)
+        (dw, _), _ = cv2.getTextSize(_MODE_DESCS[i], cv2.FONT_HERSHEY_DUPLEX, 0.46, 2)
+        cv2.putText(frame, _MODE_DESCS[i], (cx_c - dw // 2, y1 + 62),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.46, desc_col, 2)
+        if selected:
+            cv2.rectangle(frame, (x1 + 4, y1 + 3), (x1 + card_w - 4, y1 + 6),
+                          scale_color(tc, 0.65), -1)
+
+    # ── PLAYER SELECTOR ──────────────────────────────────────────
+    draw_arcade_text(frame, "SELECT  PLAYERS", cx, 362,
+                     0.60, scale_color(tc, 0.72), thickness=1, shadow=False)
+
+    ai_on = s["ai_enabled"]
+    p_card_w, p_card_h = 500, 58
+    p_gap = 20
+    p_x0 = cx - (2 * p_card_w + p_gap) // 2
+
+    for i in range(2):
+        x1 = p_x0 + i * (p_card_w + p_gap)
+        y1 = 374
+        cx_c = x1 + p_card_w // 2
+        selected = (i == 1) == ai_on          # card 0 = 2P, card 1 = AI
+        sel_col = _PLAYER_SEL_COLS[i]
+        fill = tuple(int(c * 0.08) for c in sel_col) if selected else (6, 6, 16)
+        bdr = sel_col if selected else scale_color(tc, 0.28)
+        draw_panel(frame, x1, y1, p_card_w, p_card_h, bdr, fill=fill)
+        nm_col = sel_col if selected else scale_color(tc, 0.50)
+        draw_arcade_text(frame, _PLAYER_NAMES[i], cx_c, y1 + 26,
+                         0.82 if selected else 0.72, nm_col,
+                         thickness=2 if selected else 1)
+        desc_col = tuple(int(c * 0.70) for c in sel_col) if selected else (72, 72, 72)
+        (dw, _), _ = cv2.getTextSize(_PLAYER_DESCS[i], cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)
+        cv2.putText(frame, _PLAYER_DESCS[i], (cx_c - dw // 2, y1 + 46),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.42, desc_col, 1)
+        if selected:
+            cv2.rectangle(frame, (x1 + 4, y1 + 3), (x1 + p_card_w - 4, y1 + 6),
+                          sel_col, -1)
+
+    # ── NAV HINTS ────────────────────────────────────────────────
+    cv2.putText(frame,
+                "A/D or  ← ►  change mode     [1] [2] [3]  direct select",
+                (cx - 278, 447), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (75, 75, 75), 1)
+    cv2.putText(frame,
+                "Tab  toggle AI / 2-Player                Space  start game",
+                (cx - 278, 461), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (75, 75, 75), 1)
 
     # ── STATS PANEL ───────────────────────────────────────────────
     high = max(stats.get("high_score_classic", 0),
                stats.get("high_score_survival", 0),
                stats.get("high_score_time_attack", 0))
 
-    px, py, pw, ph = cx - 375, 446, 750, 115
+    px, py, pw, ph = cx - 375, 472, 750, 90
     draw_panel(frame, px, py, pw, ph, tc)
 
     cols = [
@@ -70,13 +139,13 @@ def show_start_screen(frame, state, stats):
         ("BEST COMBO",   f"x{stats.get('longest_combo', 0)}", cx + 242),
     ]
     for label, value, lx in cols:
-        draw_arcade_text(frame, label, lx, py + 36, 0.50,
+        draw_arcade_text(frame, label, lx, py + 28, 0.50,
                          (130, 130, 130), thickness=1, shadow=False)
-        draw_arcade_text(frame, value, lx, py + 84, 1.30,
+        draw_arcade_text(frame, value, lx, py + 72, 1.18,
                          (0, 255, 255), thickness=3)
 
     for dx in [cx - 120, cx + 120]:
-        cv2.line(frame, (dx, py + 14), (dx, py + ph - 14),
+        cv2.line(frame, (dx, py + 12), (dx, py + ph - 12),
                  scale_color(tc, 0.40), 1)
 
     # ── BOTTOM BAR ────────────────────────────────────────────────
@@ -86,6 +155,52 @@ def show_start_screen(frame, state, stats):
                      "[M] Settings    [F] Fullscreen    [ESC] Quit",
                      cx, WINDOW_HEIGHT - 32, 0.52,
                      (100, 100, 100), thickness=1, shadow=False)
+
+
+def draw_exit_confirm_dialog(frame, state, selected=1):
+    """Exit confirmation modal. selected: 0=YES 1=NO."""
+    theme = get_theme(state.settings)
+    tc = theme["court"]
+    cx = WINDOW_WIDTH // 2
+    cy = WINDOW_HEIGHT // 2
+
+    draw_overlay(frame, 0.80)
+
+    pw, ph = 540, 220
+    px, py = cx - pw // 2, cy - ph // 2
+    draw_panel(frame, px, py, pw, ph, tc, fill=(8, 8, 24))
+
+    draw_arcade_text(frame, "EXIT  GAME ?", cx, py + 52, 1.5,
+                     (40, 40, 255), thickness=3)
+    draw_neon_line(frame, px + 18, py + 68, px + pw - 18, py + 68,
+                   scale_color(tc, 0.40), 1)
+
+    cv2.putText(frame, "Are you sure you want to quit?",
+                (px + 66, py + 108), cv2.FONT_HERSHEY_DUPLEX, 0.56,
+                (160, 160, 160), 1)
+
+    btn_y = py + 142
+    btn_h = 46
+    yes_cx, no_cx = cx - 150, cx + 150
+
+    for i, (bcx, label, sel_c, unsel_c) in enumerate([
+        (yes_cx, "YES", (0, 60, 220), scale_color(tc, 0.30)),
+        (no_cx,  "NO",  (0, 190, 70), scale_color(tc, 0.30)),
+    ]):
+        sel = selected == i
+        bdr = sel_c if sel else unsel_c
+        fill = tuple(int(c * 0.14) for c in sel_c) if sel else (6, 6, 16)
+        cv2.rectangle(frame, (bcx - 80, btn_y), (bcx + 80, btn_y + btn_h), fill, -1)
+        cv2.rectangle(frame, (bcx - 80, btn_y), (bcx + 80, btn_y + btn_h), bdr,
+                      2 if sel else 1)
+        draw_arcade_text(frame, label, bcx, btn_y + 33,
+                         0.90 if sel else 0.78, sel_c if sel else scale_color(tc, 0.45),
+                         thickness=2 if sel else 1)
+
+    cv2.putText(frame,
+                "Y / Enter  confirm       N / ESC  cancel",
+                (px + 96, py + ph - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.40,
+                (80, 80, 80), 1)
 
 
 # ===================================================================
@@ -222,9 +337,12 @@ def show_countdown_screen(frame, state):
                      scale_color(lc, 0.60), thickness=1, shadow=False)
 
     # ── P2 panel (right) ──────────────────────────────────────────────
+    ai = state.settings["ai_enabled"]
+    p2_label = "AI" if ai else "P2"
+    p2_sub = "CPU" if ai else "RIGHT"
     draw_panel(frame, WINDOW_WIDTH - 240, cy - 62, 200, 124, rc, fill=(8, 8, 18))
-    draw_arcade_text(frame, "P2", WINDOW_WIDTH - 140, cy - 12, 1.0, rc, thickness=2)
-    draw_arcade_text(frame, "RIGHT", WINDOW_WIDTH - 140, cy + 36, 0.54,
+    draw_arcade_text(frame, p2_label, WINDOW_WIDTH - 140, cy - 12, 1.0, rc, thickness=2)
+    draw_arcade_text(frame, p2_sub, WINDOW_WIDTH - 140, cy + 36, 0.54,
                      scale_color(rc, 0.60), thickness=1, shadow=False)
 
     # ── Countdown number / GO! ────────────────────────────────────────
@@ -349,16 +467,20 @@ def show_game_over_screen(frame, state, stats):
     draw_arcade_text(frame, "GAME  OVER", cx, 138, 3.2, (40, 40, 255), thickness=5)
 
     # ── Result line ───────────────────────────────────────────────
+    ai = state.settings["ai_enabled"]
     if state.winner == "Draw":
         result_text, result_col = "IT'S  A  DRAW !", (0, 220, 255)
     elif state.settings["game_mode"] == 1:
         result_text = f"SURVIVED  {state.survival_rally}  RALLIES !"
         result_col = (0, 255, 180)
+    elif "Left" in state.winner:
+        result_text = "YOU  WIN !" if ai else "P1  WINS !"
+        result_col = (60, 255, 80)
     else:
-        result_text = f"{state.winner.upper()}  WINS !"
-        result_col = (80, 255, 80) if "Left" in state.winner else (80, 180, 255)
+        result_text = "AI  WINS !" if ai else "P2  WINS !"
+        result_col = (0, 80, 255) if ai else (80, 180, 255)
 
-    draw_arcade_text(frame, result_text, cx, 192, 1.35, result_col, thickness=3)
+    draw_arcade_text(frame, result_text, cx, 192, 1.75, result_col, thickness=3)
 
     draw_neon_line(frame, 120, 216, WINDOW_WIDTH - 120, 216, (30, 0, 200), 1)
 
@@ -366,8 +488,10 @@ def show_game_over_screen(frame, state, stats):
     mode = state.settings["game_mode"]
     if mode == 1:
         score_text = f"Total Rally : {state.survival_rally}"
+    elif ai:
+        score_text = f"Score   You {state.score[0]}   :   AI {state.score[1]}"
     else:
-        score_text = f"Score   Left {state.score[0]}   :   Right {state.score[1]}"
+        score_text = f"Score   P1 {state.score[0]}   :   P2 {state.score[1]}"
     draw_arcade_text(frame, score_text, cx, 262, 1.0,
                      (200, 200, 200), thickness=2, shadow=False)
 

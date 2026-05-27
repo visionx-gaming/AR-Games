@@ -461,9 +461,10 @@ def draw_hud(frame, state, theme):
                          thickness=3 + int(r_flash * 2))
 
         # P1 / P2 labels — below score baseline
+        p2_label = "AI" if state.settings["ai_enabled"] else "P2"
         draw_arcade_text(frame, "P1", lx, 88, 0.52,
                          scale_color(lc, 0.68), thickness=1, shadow=False)
-        draw_arcade_text(frame, "P2", rx, 88, 0.52,
+        draw_arcade_text(frame, p2_label, rx, 88, 0.52,
                          scale_color(rc, 0.68), thickness=1, shadow=False)
 
         # Center: VS divider (Classic) or countdown timer (Time Attack)
@@ -533,25 +534,58 @@ def draw_hand_skeletons(frame, state, hand_connections):
 #  POST-PROCESSING
 # ===================================================================
 
-def draw_mouse_cursor(frame, mouse_pos):
-    """Draw a neon crosshair cursor at the given game-space position."""
+def draw_mouse_cursor(frame, mouse_pos, current_time=0.0):
+    """Draw an animated neon game-style arrow cursor.
+
+    Classic pointer shape with a pulsing glow and bright tip hotspot.
+    Tip (hotspot) is at mouse_pos.
+    """
     mx, my = mouse_pos
     if mx < 0 or mx >= WINDOW_WIDTH or my < 0 or my >= WINDOW_HEIGHT:
         return
-    color = (0, 255, 200)
-    # Drop shadow
-    cv2.line(frame, (mx - 10, my + 1), (mx - 4, my + 1), (0, 0, 0), 2)
-    cv2.line(frame, (mx + 4, my + 1), (mx + 10, my + 1), (0, 0, 0), 2)
-    cv2.line(frame, (mx + 1, my - 10), (mx + 1, my - 4), (0, 0, 0), 2)
-    cv2.line(frame, (mx + 1, my + 4), (mx + 1, my + 10), (0, 0, 0), 2)
-    # Neon arms
-    cv2.line(frame, (mx - 10, my), (mx - 4, my), color, 1)
-    cv2.line(frame, (mx + 4, my),  (mx + 10, my), color, 1)
-    cv2.line(frame, (mx, my - 10), (mx, my - 4), color, 1)
-    cv2.line(frame, (mx, my + 4),  (mx, my + 10), color, 1)
-    # Center dot + outer ring
-    cv2.circle(frame, (mx, my), 3, scale_color(color, 0.35), 1)
-    cv2.circle(frame, (mx, my), 1, (255, 255, 255), -1)
+
+    # abs(sin) gives a smooth 0→1→0 breathe rather than negative dips
+    pulse = 0.55 + 0.45 * abs(math.sin(current_time * 3.0))
+
+    # Classic pointer polygon — 7 points, tip at origin
+    #   Left edge goes straight down → diagonal notch → shaft → arrowhead right
+    pts = np.array([
+        [ 0,  0],   # tip (hotspot)
+        [ 0, 16],   # left edge, bottom
+        [ 4, 11],   # elbow notch (inner corner)
+        [ 4, 20],   # tail, bottom-left
+        [ 8, 20],   # tail, bottom-right
+        [ 8, 11],   # tail, top-right
+        [13, 11],   # arrowhead, outer right
+    ], dtype=np.int32) + np.array([[mx, my]])
+
+    # 1 — black drop shadow (shift 2,2)
+    cv2.fillPoly(frame, [pts + np.array([[2, 2]])], (0, 0, 0))
+
+    # 2 — two outer glow halos, expanded around the polygon centroid
+    c = pts.mean(axis=0)
+    for expand, dim in ((1.65, 0.09), (1.28, 0.22)):
+        g = (c + (pts - c) * expand).astype(np.int32)
+        cv2.fillPoly(frame, [g],
+                     (0, int(255 * dim * pulse), int(200 * dim * pulse)))
+
+    # 3 — dark body fill (keeps outline readable)
+    cv2.fillPoly(frame, [pts], (0, int(40 * pulse), int(32 * pulse)))
+
+    # 4 — neon outline
+    cv2.polylines(frame, [pts], True,
+                  (0, int(210 + 45 * pulse), int(165 + 35 * pulse)), 1)
+
+    # 5 — bright rim on the two lit edges of the arrowhead
+    rim = (0, int(160 + 95 * pulse), int(125 + 75 * pulse))
+    cv2.line(frame, (mx, my), (mx,      my + 16), rim, 1)
+    cv2.line(frame, (mx, my), (mx + 13, my + 11), scale_color(rim, 0.7), 1)
+
+    # 6 — pulsing tip: glow ring → neon dot → white hotspot
+    gr = 2 + int(2 * pulse)   # glow radius breathes 3 → 4 px
+    cv2.circle(frame, (mx, my), gr, (0, int(180 * pulse), int(140 * pulse)), -1)
+    cv2.circle(frame, (mx, my), 2,  (0, int(255 * pulse), int(200 * pulse)), -1)
+    cv2.circle(frame, (mx, my), 1,  (255, 255, 255), -1)
 
 
 def apply_post_processing(frame, scanline_overlay, vignette_overlay):

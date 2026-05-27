@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import pygame
 import time
+import ctypes
 
 from game.config import WINDOW_WIDTH, WINDOW_HEIGHT, get_theme
 from game.state import GameState
@@ -46,6 +47,9 @@ screen_width, screen_height = detect_screen_resolution()
 cv2.namedWindow("Game", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("Game", WINDOW_WIDTH, WINDOW_HEIGHT)
 is_fullscreen = False
+
+# Hide the OS cursor — we draw our own animated arrow instead
+ctypes.windll.user32.ShowCursor(False)
 
 
 class _MouseState:
@@ -206,7 +210,7 @@ while True:
 
     renderer.apply_post_processing(frame, scanline_overlay, vignette_overlay)
     renderer.draw_global_hud(frame, fps_display)
-    renderer.draw_mouse_cursor(frame, mouse_game_pos)
+    renderer.draw_mouse_cursor(frame, mouse_game_pos, current_time)
 
     if is_fullscreen and screen_width > 0 and screen_height > 0:
         display_frame = letterbox_frame(frame, screen_width, screen_height)
@@ -243,8 +247,7 @@ while True:
             state.game_state = "MENU"
         elif state_at_frame_start == "GAMEOVER":
             state.game_state = "START"
-        elif state_at_frame_start == "START":
-            break
+        # START ESC handled inside handle_start (opens exit confirm dialog)
         # SETTINGS ESC is handled inside handle_settings → no action needed here
 
     try:
@@ -256,6 +259,7 @@ while True:
 # =====================================================================
 #  CLEANUP
 # =====================================================================
+ctypes.windll.user32.ShowCursor(True)
 sound_mgr.stop_bgm()
 tracker.stop()
 cap.release()
