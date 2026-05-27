@@ -1,10 +1,24 @@
-"""Persistent game statistics — load/save from JSON file."""
+"""Persistent game statistics and settings — load/save from JSON files."""
 
 import json
 import os
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATS_FILE = os.path.join(_PROJECT_ROOT, "stats.json")
+STATS_FILE    = os.path.join(_PROJECT_ROOT, "stats.json")
+SETTINGS_FILE = os.path.join(_PROJECT_ROOT, "settings.json")
+
+DEFAULT_SETTINGS = {
+    "score_to_win":       5,
+    "difficulty":         1,
+    "game_mode":          0,
+    "ai_enabled":         False,
+    "color_theme":        0,
+    "sound_enabled":      True,
+    "music_volume":       90,
+    "sfx_volume":         20,
+    "show_hand_skeleton": True,
+    "obstacles_enabled":  False,
+}
 
 DEFAULT_STATS = {
     "high_score_classic": 0,
@@ -66,3 +80,29 @@ def record_game_result(stats, state):
         stats["total_wins_right"] = stats.get("total_wins_right", 0) + 1
 
     save_stats(stats)
+
+
+# ===================================================================
+#  SETTINGS PERSISTENCE
+# ===================================================================
+
+def load_settings():
+    """Load settings from file, merging with defaults for any missing keys."""
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            data = json.load(f)
+        merged = dict(DEFAULT_SETTINGS)
+        merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+        return merged
+    except (FileNotFoundError, json.JSONDecodeError):
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(settings):
+    """Persist settings to JSON, excluding transient UI state."""
+    to_save = {k: v for k, v in settings.items() if k in DEFAULT_SETTINGS}
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(to_save, f, indent=2)
+    except IOError:
+        pass

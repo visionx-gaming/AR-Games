@@ -12,7 +12,7 @@ import time
 from game.config import WINDOW_WIDTH, WINDOW_HEIGHT, get_theme
 from game.state import GameState
 from game.sound import SoundManager
-from game.stats import load_stats
+from game.stats import load_stats, load_settings
 from game.hand_tracking import HandTracker
 from game.utils import detect_screen_resolution, letterbox_frame
 from game import effects, renderer
@@ -26,6 +26,14 @@ pygame.init()
 sound_mgr = SoundManager()
 stats = load_stats()
 state = GameState()
+
+# Restore settings saved from the previous session
+_saved = load_settings()
+state.settings.update(_saved)
+sound_mgr.set_bgm_volume(state.settings["music_volume"])
+sound_mgr.set_sfx_volume(state.settings["sfx_volume"])
+if not state.settings["sound_enabled"]:
+    sound_mgr.update_enabled(False)
 
 state.high_score = max(
     stats.get("high_score_classic", 0),

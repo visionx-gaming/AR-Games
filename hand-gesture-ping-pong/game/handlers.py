@@ -234,13 +234,16 @@ def handle_menu(ctx: FrameCtx, state, sound_mgr) -> None:
 
     UP, DOWN = 2490368, 2621440
     n = len(MENU_ITEMS)
+    _kb_nav = False
 
     if ctx.key in (ord('w'), ord('W')) or ctx.key_raw == UP:
         state.menu_selection = (state.menu_selection - 1) % n
         sound_mgr.play_menu_tick()
+        _kb_nav = True
     elif ctx.key in (ord('s'), ord('S')) or ctx.key_raw == DOWN:
         state.menu_selection = (state.menu_selection + 1) % n
         sound_mgr.play_menu_tick()
+        _kb_nav = True
     elif ctx.key in (13, ord(' ')):          # Enter or Space — select
         sel = state.menu_selection
         if sel == 0:                          # Resume
@@ -260,6 +263,8 @@ def handle_menu(ctx: FrameCtx, state, sound_mgr) -> None:
         state.game_state = state.previous_state
 
     # Mouse: hover to highlight, click to select
+    # Skip hover selection update when keyboard navigation happened this frame
+    # to prevent the mouse position from overriding keyboard input.
     _mx, _my = ctx.mouse_pos
     if 0 <= _mx <= WINDOW_WIDTH:
         cx_m = WINDOW_WIDTH // 2
@@ -270,7 +275,7 @@ def handle_menu(ctx: FrameCtx, state, sound_mgr) -> None:
         for i in range(len(MENU_ITEMS)):
             iy = py_m + 118 + i * 62
             if (px_m + 14 <= _mx <= px_m + pw_m - 14) and (iy - 30 <= _my <= iy + 16):
-                if state.menu_selection != i:
+                if state.menu_selection != i and not _kb_nav:
                     state.menu_selection = i
                     sound_mgr.play_menu_tick()
                 if ctx.mouse_clicked:

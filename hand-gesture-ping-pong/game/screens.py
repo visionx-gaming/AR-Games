@@ -11,6 +11,7 @@ from game.renderer import (
     draw_overlay, draw_arcade_text, draw_panel, draw_neon_line,
 )
 from game.utils import scale_color
+from game.stats import save_settings
 
 
 # ===================================================================
@@ -195,6 +196,7 @@ def change_setting(s, idx, direction, sound_mgr):
         s["show_hand_skeleton"] = not s["show_hand_skeleton"]
     elif idx == 9:
         s["obstacles_enabled"] = not s["obstacles_enabled"]
+    save_settings(s)
 
 
 # ===================================================================
@@ -309,11 +311,15 @@ def show_menu_screen(frame, state):
                           scale_color(tc, 0.55), 1)
             cv2.putText(frame, ">", (px + 28, iy),
                         cv2.FONT_HERSHEY_DUPLEX, 0.9, tc, 2)
+        else:
+            cv2.rectangle(frame,
+                          (px + 14, iy - 30), (px + pw - 14, iy + 16),
+                          scale_color(tc, 0.06), -1)
 
-        col = (0, 255, 255) if selected else (165, 165, 165)
+        col = (0, 255, 255) if selected else scale_color(tc, 0.55)
         thick = 2 if selected else 1
         draw_arcade_text(frame, item, cx + 14, iy, 0.82,
-                         col, thickness=thick, shadow=selected)
+                         col, thickness=thick, shadow=True)
 
     # Hints bar
     draw_neon_line(frame, px + 18, py + ph - 46,

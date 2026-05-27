@@ -1,5 +1,9 @@
 .venv
 venv
+
+# Per-user runtime data — not part of the codebase
+hand-gesture-ping-pong/settings.json
+hand-gesture-ping-pong/stats.json
 *.pyc
 *.env
 *.ipynb
