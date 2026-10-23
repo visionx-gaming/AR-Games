@@ -5,57 +5,111 @@ mutable objects it needs, performs all rendering and input for its state,
 and may transition state.game_state.
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Optional, Tuple
 
-import cv2
-
-from game.config import (
-    COUNTDOWN_DURATION, GESTURE_REQUIRED_DURATION,
-    get_theme, WINDOW_WIDTH, WINDOW_HEIGHT, GAME_MODE_NAMES,
-)
-from game import effects, engine, renderer, screens
-from game.screens import MENU_ITEMS, change_setting
-from game.stats import record_game_result, save_settings
-
-
-@dataclass
-class FrameCtx:
-    """Immutable per-frame data passed to every handler."""
-    frame: Any
-    theme: dict
-    hand_pos: dict
-    fist_state: dict
-    key: int
-    key_raw: int
-    current_time: float
-    dt: float
-    glow_layer: Any
-    mp_hand_connections: Any = None
-    mouse_pos: tuple = (-1, -1)
-    mouse_clicked: bool = False
-    mouse_right_clicked: bool = False
+from game import event_handlers, modes, powerups
+from game.flow import FrameCtx, in_rect, do_start_game
+from game.config import COUNTDOWN_DURATION, GESTURE_REQUIRED_DURATION, GAME_MODE_NAMES
+from game import effects, engine, hud, menu_screens, renderer, settings_screen
+from game import keys, history, stats as stats_mod
+from game.stats import record_game_result, save_settings, clean_name, NAME_CHARS, NAME_MAX_LEN
 
 
 # ===================================================================
 #  HANDLERS
 # ===================================================================
 
-_LEFT_RAW = 2424832
-_RIGHT_RAW = 2555904
+_LEFT_RAW = keys.LEFT
+_RIGHT_RAW = keys.RIGHT
 _exit_confirm_sel: int = 1   # 0=YES  1=NO; default to NO for safety
 
 
-def _do_start_game(ctx, state, sound_mgr):
-    """Shared helper: transition START → COUNTDOWN."""
+def _resume_play(ctx, state):
+    """Resume a paused game through a 3-2-1 countdown (ball and score are kept)."""
+    state.countdown_start = ctx.current_time
+    state.game_state = "COUNTDOWN"
+    state.fist_pause_cooldown = 1.5
+
+
+def _menu_resume(ctx, state):
+    """Leave the in-game menu and return to where it was opened from."""
+    prev = state.previous_state
+    if prev == "PLAYING":
+        _resume_play(ctx, state)
+    elif prev == "COUNTDOWN":
+        state.countdown_start = ctx.current_time   # restart the interrupted countdown
+        state.game_state = "COUNTDOWN"
+    else:
+        state.game_state = prev or "PAUSED"
+
+
+def _menu_select(ctx, state, sound_mgr, sel):
+    """Run in-game menu item `sel` (Resume / Settings / Main Menu / Quit)."""
+    if sel == 0:
+        _menu_resume(ctx, state)
+    elif sel == 1:
+        state.settings_return_state = "MENU"
+        state.game_state = "SETTINGS"
+    elif sel == 2:
+        sound_mgr.stop_bgm()
+        if state.settings["sound_enabled"]:
+            sound_mgr.start_lobby_music(state.settings["music_volume"])
+        state.previous_state = ""
+        state.gesture_armed = False
+        state.start_gesture_time = None
+        state.game_state = "START"
+    elif sel == 3:
+        state.game_state = "QUIT"
+
+
+def _restart_game(ctx, state, sound_mgr):
+    """GAMEOVER -> COUNTDOWN for a rematch."""
     state.reset_for_new_game()
     state.countdown_start = ctx.current_time
     state.game_state = "COUNTDOWN"
-    state.start_gesture_time = None
-    engine.init_obstacles(state)
-    sound_mgr.play_start_jingle()
-    if state.settings["sound_enabled"]:
+    state.restart_gesture_time = None
+    powerups.init_obstacles(state)
+    if state.settings["sound_enabled"] and not sound_mgr.bgm_playing:
         sound_mgr.start_bgm(state.settings["music_volume"])
+
+
+def _open_name_editor(state):
+    state.name_edit_active = True
+    state.name_edit_field = 0
+    state.name_edit_buf = [state.settings["player1_name"], state.settings["player2_name"]]
+    state.start_gesture_time = None
+
+
+def _handle_name_editor(ctx, state, sound_mgr):
+    """Keyboard / mouse input for the player-name dialog."""
+    f = state.name_edit_field
+    buf = state.name_edit_buf
+    k = ctx.key
+
+    if ctx.mouse_clicked:
+        for i, (x1, y1, x2, y2) in enumerate(menu_screens.name_field_rects()):
+            if x1 <= ctx.mouse_pos[0] <= x2 and y1 <= ctx.mouse_pos[1] <= y2:
+                state.name_edit_field = i
+                sound_mgr.play_menu_tick()
+
+    if k == 27:                                        # Esc: discard
+        state.name_edit_active = False
+    elif k == 13:                                      # Enter: next field, then save
+        if f == 0:
+            state.name_edit_field = 1
+            sound_mgr.play_menu_tick()
+        else:
+            state.settings["player1_name"] = clean_name(buf[0], "PLAYER 1")
+            state.settings["player2_name"] = clean_name(buf[1], "PLAYER 2")
+            save_settings(state.settings)
+            state.name_edit_active = False
+            sound_mgr.play_menu_tick()
+    elif k == 9 or ctx.key_raw in (keys.UP, keys.DOWN):
+        state.name_edit_field = 1 - f
+        sound_mgr.play_menu_tick()
+    elif k == 8:                                       # Backspace
+        buf[f] = buf[f][:-1]
+    elif 32 <= k < 127 and chr(k) in NAME_CHARS and len(buf[f]) < NAME_MAX_LEN:
+        buf[f] += chr(k)
 
 
 def handle_start(ctx: FrameCtx, state, stats, sound_mgr, tracker) -> None:
@@ -69,11 +123,17 @@ def handle_start(ctx: FrameCtx, state, stats, sound_mgr, tracker) -> None:
     if state.settings["show_hand_skeleton"]:
         renderer.draw_hand_skeletons(ctx.frame, state, ctx.mp_hand_connections)
 
-    screens.show_start_screen(ctx.frame, state, stats)
+    menu_screens.show_start_screen(ctx.frame, state, stats)
+
+    # ── Player-name dialog (takes all input while open) ───────────
+    if state.name_edit_active:
+        menu_screens.draw_name_dialog(ctx.frame, state)
+        _handle_name_editor(ctx, state, sound_mgr)
+        return
 
     # ── Exit confirmation dialog ──────────────────────────────────
     if state.show_exit_confirm:
-        screens.draw_exit_confirm_dialog(ctx.frame, state, _exit_confirm_sel)
+        menu_screens.draw_exit_confirm_dialog(ctx.frame, state, _exit_confirm_sel)
 
         # Keyboard navigation inside dialog
         if ctx.key_raw == _LEFT_RAW or ctx.key in (ord('a'), ord('A')):
@@ -98,23 +158,21 @@ def handle_start(ctx: FrameCtx, state, stats, sound_mgr, tracker) -> None:
                 state.show_exit_confirm = False
                 _exit_confirm_sel = 1
 
-        # Mouse hover + click
-        _mx, _my = ctx.mouse_pos
-        cx_w = WINDOW_WIDTH // 2
-        cy_w = WINDOW_HEIGHT // 2
-        btn_y = cy_w - 110 + 142   # py + 142, py = cy - ph//2 = cy - 110
-        yes_cx, no_cx = cx_w - 150, cx_w + 150
+        # Mouse hover + click (button rects come from the screen that draws them)
+        mx, my = ctx.mouse_pos
+        rects = menu_screens.exit_button_rects()
+        over = {k: in_rect(mx, my, r) for k, r in rects.items()}
         prev = _exit_confirm_sel
-        if (yes_cx - 80 <= _mx <= yes_cx + 80) and (btn_y <= _my <= btn_y + 46):
+        if over["yes"]:
             _exit_confirm_sel = 0
-        elif (no_cx - 80 <= _mx <= no_cx + 80) and (btn_y <= _my <= btn_y + 46):
+        elif over["no"]:
             _exit_confirm_sel = 1
         if _exit_confirm_sel != prev:
             sound_mgr.play_menu_tick()
         if ctx.mouse_clicked:
-            if (yes_cx - 80 <= _mx <= yes_cx + 80) and (btn_y <= _my <= btn_y + 46):
+            if over["yes"]:
                 state.game_state = "QUIT"
-            elif (no_cx - 80 <= _mx <= no_cx + 80) and (btn_y <= _my <= btn_y + 46):
+            elif over["no"]:
                 state.show_exit_confirm = False
                 _exit_confirm_sel = 1
         return  # consume all input while dialog is open
@@ -125,138 +183,99 @@ def handle_start(ctx: FrameCtx, state, stats, sound_mgr, tracker) -> None:
         _exit_confirm_sel = 1
         return
 
-    # ── Mode selection (A/D or arrows to cycle, 1/2/3 direct) ────
-    n_modes = len(GAME_MODE_NAMES)
-    if ctx.key in (ord('a'), ord('A')) or ctx.key_raw == _LEFT_RAW:
-        state.settings["game_mode"] = (state.settings["game_mode"] - 1) % n_modes
-        save_settings(state.settings)
-        sound_mgr.play_menu_tick()
-    elif ctx.key in (ord('d'), ord('D')) or ctx.key_raw == _RIGHT_RAW:
-        state.settings["game_mode"] = (state.settings["game_mode"] + 1) % n_modes
-        save_settings(state.settings)
-        sound_mgr.play_menu_tick()
-    elif ctx.key == ord('1') and state.settings["game_mode"] != 0:
-        state.settings["game_mode"] = 0
-        save_settings(state.settings)
-        sound_mgr.play_menu_tick()
-    elif ctx.key == ord('2') and state.settings["game_mode"] != 1:
-        state.settings["game_mode"] = 1
-        save_settings(state.settings)
-        sound_mgr.play_menu_tick()
-    elif ctx.key == ord('3') and state.settings["game_mode"] != 2:
-        state.settings["game_mode"] = 2
-        save_settings(state.settings)
-        sound_mgr.play_menu_tick()
-    elif ctx.key == 9:   # Tab: toggle AI / 2-Player
-        state.settings["ai_enabled"] = not state.settings["ai_enabled"]
+    # ── Keyboard shortcuts (1/2/3 pick a mode, Tab swaps 2P/CPU) ──
+    if ctx.key in (ord('1'), ord('2'), ord('3')):
+        mode = ctx.key - ord('1')
+        if state.settings["game_mode"] != mode:
+            state.settings["game_mode"] = mode
+            save_settings(state.settings)
+            sound_mgr.play_menu_tick()
+    elif ctx.key == 9:   # Tab: 2 players -> CPU on the right -> CPU on the left
+        state.set_player_mode(state.player_mode() + 1)
         save_settings(state.settings)
         sound_mgr.play_menu_tick()
     elif ctx.key in (ord('m'), ord('M')):
         state.settings_return_state = "START"
         state.game_state = "SETTINGS"
-
-    # ── Space or Enter starts the game ────────────────────────────
-    if ctx.key in (ord(' '), 13):
-        _do_start_game(ctx, state, sound_mgr)
+        return
+    elif ctx.key in (ord('n'), ord('N')):
+        _open_name_editor(state)
         return
 
-    # ── Wave-both-hands gesture ───────────────────────────────────
-    if ctx.hand_pos["Left"] is not None and ctx.hand_pos["Right"] is not None:
+    # ── Space starts the game ─────────────────────────────────────
+    if ctx.key == ord(' '):
+        do_start_game(ctx, state, sound_mgr)
+        return
+
+    # ── Show-both-hands gesture ───────────────────────────────────
+    # Edge-triggered: hands must first be seen away after entering this
+    # screen, so returning here with both hands up never auto-starts a game.
+    if ctx.hand_pos["Left"] is None or ctx.hand_pos["Right"] is None:
+        state.gesture_armed = True
+        state.start_gesture_time = None
+    elif state.gesture_armed:
         if state.start_gesture_time is None:
             state.start_gesture_time = ctx.current_time
         elif ctx.current_time - state.start_gesture_time >= GESTURE_REQUIRED_DURATION:
-            _do_start_game(ctx, state, sound_mgr)
-    else:
-        state.start_gesture_time = None
+            do_start_game(ctx, state, sound_mgr)
+            return
 
-    # ── Mouse clicks ─────────────────────────────────────────────
-    _mx, _my = ctx.mouse_pos
-    if ctx.mouse_clicked and 0 <= _mx <= WINDOW_WIDTH:
-        cx_w = WINDOW_WIDTH // 2
-        # "PRESS SPACE TO START" area (y=205 in new layout)
-        if (cx_w - 380 <= _mx <= cx_w + 380) and (183 <= _my <= 233):
-            _do_start_game(ctx, state, sound_mgr)
-        # Mode card clicks (y=270–350)
-        elif 270 <= _my <= 350:
-            card_w_c, card_gap_c = 340, 15
-            x0_c = cx_w - (3 * card_w_c + 2 * card_gap_c) // 2
-            for i in range(3):
-                x1_c = x0_c + i * (card_w_c + card_gap_c)
-                if x1_c <= _mx <= x1_c + card_w_c:
-                    if state.settings["game_mode"] != i:
-                        state.settings["game_mode"] = i
-                        save_settings(state.settings)
-                        sound_mgr.play_menu_tick()
-                    break
-        # Player card clicks (y=374–432)
-        elif 374 <= _my <= 432:
-            p_card_w, p_gap = 500, 20
-            p_x0 = cx_w - (2 * p_card_w + p_gap) // 2
-            for i in range(2):
-                x1_c = p_x0 + i * (p_card_w + p_gap)
-                if x1_c <= _mx <= x1_c + p_card_w:
-                    want_ai = (i == 1)
-                    if state.settings["ai_enabled"] != want_ai:
-                        state.settings["ai_enabled"] = want_ai
-                        save_settings(state.settings)
-                        sound_mgr.play_menu_tick()
-                    break
-
-
-_settings_last_mouse_pos: tuple = (-1, -1)
-_settings_mouse_active: bool = False
-_SETTINGS_NAV_KEYS = frozenset([
-    ord('w'), ord('W'), ord('s'), ord('S'),
-    ord('a'), ord('A'), ord('d'), ord('D'),
-])
-_SETTINGS_NAV_RAW = frozenset([2490368, 2621440, 2424832, 2555904])  # UP DOWN LEFT RIGHT
+    # ── Menu widgets: W/S move, A/D change, Enter/click select ─────
+    n_modes = len(GAME_MODE_NAMES)
+    items, rects = menu_screens.start_items(state), menu_screens.start_rects()
+    for ev in menu_screens.VIEWS["start"].input(ctx, items, rects, activate_keys=(13,)):
+        kind, iid = ev[0], ev[1]
+        if kind == "focus":
+            sound_mgr.play_menu_tick()
+        elif kind == "activate":
+            if iid == "play":
+                do_start_game(ctx, state, sound_mgr)
+                return
+            if iid == "names":
+                _open_name_editor(state)
+                return
+            if iid == "qualifier":
+                modes.enter_qualifier(state)
+                sound_mgr.play_menu_tick()
+                return
+            if iid == "finals":
+                modes.enter_finals(state)
+                sound_mgr.play_menu_tick()
+                return
+            if iid == "settings":
+                state.settings_return_state = "START"
+                state.game_state = "SETTINGS"
+                return
+            if iid == "exit":
+                state.show_exit_confirm = True
+                _exit_confirm_sel = 1
+                return
+        elif kind == "adjust" and iid == "mode":
+            state.settings["game_mode"] = (state.settings["game_mode"] + ev[2]) % n_modes
+            save_settings(state.settings)
+            sound_mgr.play_menu_tick()
+        elif kind == "adjust" and iid == "players":
+            state.set_player_mode(state.player_mode() + ev[2])
+            save_settings(state.settings)
+            sound_mgr.play_menu_tick()
+        elif kind == "set" and iid == "players":
+            state.set_player_mode(ev[2])
+            save_settings(state.settings)
+            sound_mgr.play_menu_tick()
 
 
 def handle_settings(ctx: FrameCtx, state, sound_mgr) -> None:
-    global _settings_last_mouse_pos, _settings_mouse_active
-
     renderer.draw_animated_bg(ctx.frame, state, ctx.theme)
-    screens.show_settings_screen(ctx.frame, state)
-
-    # Keyboard navigation → keyboard claims control
-    _k = ctx.key_raw & 0xFF if ctx.key_raw != -1 else 255
-    if _k in _SETTINGS_NAV_KEYS or ctx.key_raw in _SETTINGS_NAV_RAW:
-        _settings_mouse_active = False
-
-    new_state = screens.handle_settings_input(ctx.key_raw, state, sound_mgr)
-    if new_state:
-        # ESC from settings returns to wherever we came from (START or MENU)
-        state.game_state = state.settings_return_state if new_state == "START" else new_state
-
-    # Mouse moves > 5 px → mouse reclaims control
-    _mx, _my = ctx.mouse_pos
-    _lx, _ly = _settings_last_mouse_pos
-    if _lx >= 0:
-        dx, dy = _mx - _lx, _my - _ly
-        if dx * dx + dy * dy > _MOUSE_THRESH_SQ:
-            _settings_mouse_active = True
-    _settings_last_mouse_pos = (_mx, _my)
-
-    # Hover highlight: only in mouse mode. Clicks always work.
-    if 0 <= _mx <= WINDOW_WIDTH:
-        cx = WINDOW_WIDTH // 2
-        start_y = 100
-        s = state.settings
-        for i in range(10):
-            y = start_y + 65 + i * 42
-            if (cx - 280 <= _mx <= cx + 280) and (y - 25 <= _my <= y + 10):
-                if _settings_mouse_active and s["selected_setting"] != i:
-                    s["selected_setting"] = i
-                    sound_mgr.play_menu_tick()
-                if ctx.mouse_clicked:
-                    change_setting(s, i, +1, sound_mgr)
-                elif ctx.mouse_right_clicked:
-                    change_setting(s, i, -1, sound_mgr)
-                break
+    # Draws the screen and handles all its input; True = leave (Esc)
+    if settings_screen.settings_screen(ctx, state, sound_mgr):
+        # Back to wherever we came from (main menu or the in-game menu)
+        state.game_state = state.settings_return_state
 
 
 def handle_countdown(ctx: FrameCtx, state, tracker) -> None:
+    engine.apply_keyboard_paddles(state, ctx.key, ctx.key_raw)
     engine.update_paddles(state)
+    effects.update_effects(state, ctx.dt)
 
     renderer.draw_animated_bg(ctx.frame, state, ctx.theme)
     renderer.draw_court(ctx.frame, state, ctx.theme)
@@ -264,34 +283,44 @@ def handle_countdown(ctx: FrameCtx, state, tracker) -> None:
     if state.settings["obstacles_enabled"]:
         renderer.draw_obstacles(ctx.frame, state, ctx.theme)
 
+    renderer.draw_paused_balls(ctx.frame, state, ctx.theme)
     renderer.draw_paddles(ctx.frame, state, ctx.theme, ctx.glow_layer)
     renderer.apply_glow(ctx.frame, ctx.glow_layer)
+    renderer.draw_shockwaves(ctx.frame, state)
+    renderer.draw_particles(ctx.frame, state)
+    renderer.draw_floating_texts(ctx.frame, state)
+    hud.draw_hud(ctx.frame, state, ctx.theme)
 
     if state.settings["show_hand_skeleton"]:
         renderer.draw_hand_skeletons(ctx.frame, state, ctx.mp_hand_connections)
 
-    screens.show_countdown_screen(ctx.frame, state)
+    menu_screens.show_countdown_screen(ctx.frame, state)
 
     elapsed = ctx.current_time - state.countdown_start
     if elapsed >= COUNTDOWN_DURATION + 0.5:
-        engine.reset_ball(state)
+        # Between points / after a resume the ball already exists; only a
+        # fresh game needs one created here.
+        if not any(b.is_main for b in state.balls):
+            engine.reset_ball(state)
         state.game_state = "PLAYING"
-        state.play_start_time = ctx.current_time
 
 
 def handle_playing(ctx: FrameCtx, state, sound_mgr, tracker) -> None:
-    if (ctx.fist_state["Left"] and ctx.fist_state["Right"]
+    if (state.settings.get("fist_pause_enabled", False)
+            and ctx.fist_state["Left"] and ctx.fist_state["Right"]
             and state.fist_pause_cooldown <= 0):
         state.game_state = "PAUSED"
+        state.pause_by_key = False
         state.fist_pause_cooldown = 1.5
         return
 
+    state.game_time += ctx.dt
+    engine.apply_keyboard_paddles(state, ctx.key, ctx.key_raw)
     engine.update_paddles(state)
-    engine.update_balls(state)
-    engine.check_all_collisions(state, sound_mgr)
-    engine.update_powerups(state, sound_mgr)
-    engine.update_obstacles(state)
-    engine.check_time_attack(state)
+    engine.step_physics(state, sound_mgr, ctx.dt)
+    if state.game_state == "PLAYING":
+        powerups.update_powerups(state, sound_mgr)
+        engine.check_time_attack(state)
     effects.update_effects(state, ctx.dt)
 
     renderer.draw_animated_bg(ctx.frame, state, ctx.theme)
@@ -309,13 +338,15 @@ def handle_playing(ctx: FrameCtx, state, sound_mgr, tracker) -> None:
     renderer.draw_particles(ctx.frame, state)
     renderer.draw_floating_texts(ctx.frame, state)
     renderer.draw_combo(ctx.frame, state, ctx.theme)
-    renderer.draw_hud(ctx.frame, state, ctx.theme)
+    hud.draw_hud(ctx.frame, state, ctx.theme)
+    hud.draw_hand_lost(ctx.frame, state)
 
     if state.settings["show_hand_skeleton"]:
         renderer.draw_hand_skeletons(ctx.frame, state, ctx.mp_hand_connections)
 
     if ctx.key in (ord('p'), ord('P')):
         state.game_state = "PAUSED"
+        state.pause_by_key = True
         state.fist_pause_cooldown = 1.5
 
 
@@ -328,39 +359,28 @@ def handle_paused(ctx: FrameCtx, state, sound_mgr) -> None:
 
     renderer.draw_paddles(ctx.frame, state, ctx.theme)
     renderer.draw_paused_balls(ctx.frame, state, ctx.theme)
-    screens.show_pause_screen(ctx.frame, state)
+    menu_screens.show_pause_screen(ctx.frame, state)
     renderer.draw_particles(ctx.frame, state)
 
     if ctx.key in (ord('r'), ord('R')):
-        state.game_state = "PLAYING"
-        state.fist_pause_cooldown = 1.5
-    elif (not ctx.fist_state["Left"] and not ctx.fist_state["Right"]
-          and ctx.hand_pos["Left"] is not None
-          and ctx.hand_pos["Right"] is not None
-          and state.fist_pause_cooldown <= 0):
-        state.game_state = "PLAYING"
-        state.fist_pause_cooldown = 1.5
+        _resume_play(ctx, state)
+        return
+    # Hand-resume only for a gesture pause: a keyboard pause (P) stays paused
+    # until the player resumes it, even though their hands are in view.
+    if (not state.pause_by_key
+            and not ctx.fist_state["Left"] and not ctx.fist_state["Right"]
+            and ctx.hand_pos["Left"] is not None
+            and ctx.hand_pos["Right"] is not None
+            and state.fist_pause_cooldown <= 0):
+        _resume_play(ctx, state)
+        return
 
-    # Mouse: click on "R TO RESUME" text area
-    _mx, _my = ctx.mouse_pos
-    if ctx.mouse_clicked and 0 <= _mx <= WINDOW_WIDTH:
-        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
-        if (cx - 250 <= _mx <= cx + 250) and (cy + 22 <= _my <= cy + 72):
-            state.game_state = "PLAYING"
-            state.fist_pause_cooldown = 1.5
-
-
-# Last recorded mouse position and whether the mouse is currently "driving"
-# menu navigation. Keyboard press claims control; mouse must move more than
-# _MOUSE_THRESH pixels to reclaim it — filters out jitter on the same frame.
-_menu_last_mouse_pos: tuple = (-1, -1)
-_menu_mouse_active: bool = False
-_MOUSE_THRESH_SQ: int = 25          # 5 px radius squared
+    # Mouse: the RESUME button
+    if ctx.mouse_clicked and in_rect(*ctx.mouse_pos, menu_screens.pause_resume_rect()):
+        _resume_play(ctx, state)
 
 
 def handle_menu(ctx: FrameCtx, state, sound_mgr) -> None:
-    global _menu_last_mouse_pos, _menu_mouse_active
-
     # Draw frozen game state beneath the overlay
     renderer.draw_animated_bg(ctx.frame, state, ctx.theme)
     renderer.draw_court(ctx.frame, state, ctx.theme)
@@ -369,121 +389,60 @@ def handle_menu(ctx: FrameCtx, state, sound_mgr) -> None:
     renderer.draw_paddles(ctx.frame, state, ctx.theme)
     renderer.draw_paused_balls(ctx.frame, state, ctx.theme)
 
-    screens.show_menu_screen(ctx.frame, state)
+    chosen = menu_screens.menu_screen(ctx, state, sound_mgr)    # draws + handles W/S/Enter/mouse
+    if ctx.key == 27:                                       # ESC → resume
+        _menu_resume(ctx, state)
+    elif chosen is not None:
+        _menu_select(ctx, state, sound_mgr, chosen)
 
-    UP, DOWN = 2490368, 2621440
-    n = len(MENU_ITEMS)
 
-    if ctx.key in (ord('w'), ord('W')) or ctx.key_raw == UP:
-        state.menu_selection = (state.menu_selection - 1) % n
-        sound_mgr.play_menu_tick()
-        _menu_mouse_active = False          # keyboard claims control
-    elif ctx.key in (ord('s'), ord('S')) or ctx.key_raw == DOWN:
-        state.menu_selection = (state.menu_selection + 1) % n
-        sound_mgr.play_menu_tick()
-        _menu_mouse_active = False          # keyboard claims control
-    elif ctx.key in (13, ord(' ')):          # Enter or Space — select
-        sel = state.menu_selection
-        if sel == 0:                          # Resume
-            state.game_state = state.previous_state
-        elif sel == 1:                        # Settings
-            state.settings_return_state = "MENU"
-            state.game_state = "SETTINGS"
-        elif sel == 2:                        # Quit to Main Menu
-            sound_mgr.stop_bgm()
-            if state.settings["sound_enabled"]:
-                sound_mgr.start_lobby_music(state.settings["music_volume"])
-            state.previous_state = ""
-            state.game_state = "START"
-        elif sel == 3:                        # Quit Game
-            state.game_state = "QUIT"
-    elif ctx.key == 27:                       # ESC → resume
-        state.game_state = state.previous_state
-
-    # Mouse hover — only when the mouse has moved enough to reclaim control
-    _mx, _my = ctx.mouse_pos
-    _lx, _ly = _menu_last_mouse_pos
-    if _lx >= 0:                             # skip on the very first frame
-        dx, dy = _mx - _lx, _my - _ly
-        if dx * dx + dy * dy > _MOUSE_THRESH_SQ:
-            _menu_mouse_active = True        # deliberate mouse movement
-    _menu_last_mouse_pos = (_mx, _my)
-
-    if _menu_mouse_active and 0 <= _mx <= WINDOW_WIDTH:
-        cx_m = WINDOW_WIDTH // 2
-        cy_m = WINDOW_HEIGHT // 2
-        pw_m, ph_m = 480, 395
-        px_m = cx_m - pw_m // 2
-        py_m = cy_m - ph_m // 2
-        for i in range(len(MENU_ITEMS)):
-            iy = py_m + 118 + i * 62
-            if (px_m + 14 <= _mx <= px_m + pw_m - 14) and (iy - 30 <= _my <= iy + 16):
-                if state.menu_selection != i:
-                    state.menu_selection = i
-                    sound_mgr.play_menu_tick()
-                if ctx.mouse_clicked:
-                    if i == 0:
-                        state.game_state = state.previous_state
-                    elif i == 1:
-                        state.settings_return_state = "MENU"
-                        state.game_state = "SETTINGS"
-                    elif i == 2:
-                        sound_mgr.stop_bgm()
-                        if state.settings["sound_enabled"]:
-                            sound_mgr.start_lobby_music(state.settings["music_volume"])
-                        state.previous_state = ""
-                        state.game_state = "START"
-                    elif i == 3:
-                        state.game_state = "QUIT"
-                break
+# Seconds the result screen stays up before hand gestures can restart.
+_GAMEOVER_GESTURE_LOCKOUT = 2.0
 
 
 def handle_gameover(ctx: FrameCtx, state, stats, sound_mgr) -> None:
     renderer.draw_animated_bg(ctx.frame, state, ctx.theme)
     effects.update_effects(state, ctx.dt)
     renderer.draw_particles(ctx.frame, state)
-    screens.show_game_over_screen(ctx.frame, state, stats)
+
+    if state.event_mode:
+        event_handlers._handle_event_gameover(ctx, state, stats, sound_mgr)
+        return
 
     if not state.stats_saved:
         record_game_result(stats, state)
+        history.record_game(state)
+        state.high_score = stats_mod.high_score_value(stats, state.settings["game_mode"])
         state.stats_saved = True
         sound_mgr.stop_bgm()
         sound_mgr.play_gameover()
 
+    menu_screens.show_game_over_screen(ctx.frame, state, stats)
+
     # Space / Enter also restarts
     if ctx.key in (13, ord(' ')):
-        state.reset_for_new_game()
-        state.countdown_start = ctx.current_time
-        state.game_state = "COUNTDOWN"
-        state.restart_gesture_time = None
-        engine.init_obstacles(state)
-        if state.settings["sound_enabled"] and not sound_mgr.bgm_playing:
-            sound_mgr.start_bgm(state.settings["music_volume"])
+        _restart_game(ctx, state, sound_mgr)
         return
 
-    if ctx.hand_pos["Left"] is not None and ctx.hand_pos["Right"] is not None:
+    # Hand restart is edge-triggered and locked out briefly so the players
+    # (still holding both hands up) can read the result first.
+    if ctx.hand_pos["Left"] is None or ctx.hand_pos["Right"] is None:
+        state.gesture_armed = True
+        state.restart_gesture_time = None
+    elif (state.gesture_armed
+            and ctx.current_time - state.gameover_time >= _GAMEOVER_GESTURE_LOCKOUT):
         if state.restart_gesture_time is None:
             state.restart_gesture_time = ctx.current_time
         elif ctx.current_time - state.restart_gesture_time >= GESTURE_REQUIRED_DURATION:
-            state.reset_for_new_game()
-            state.countdown_start = ctx.current_time
-            state.game_state = "COUNTDOWN"
-            state.restart_gesture_time = None
-            engine.init_obstacles(state)
-            if state.settings["sound_enabled"] and not sound_mgr.bgm_playing:
-                sound_mgr.start_bgm(state.settings["music_volume"])
-    else:
-        state.restart_gesture_time = None
+            _restart_game(ctx, state, sound_mgr)
+            return
 
-    # Mouse: click on "PRESS SPACE TO RESTART" text area
-    _mx, _my = ctx.mouse_pos
-    if ctx.mouse_clicked and 0 <= _mx <= WINDOW_WIDTH:
-        cx = WINDOW_WIDTH // 2
-        if (cx - 400 <= _mx <= cx + 400) and (426 <= _my <= 486):
-            state.reset_for_new_game()
-            state.countdown_start = ctx.current_time
-            state.game_state = "COUNTDOWN"
-            state.restart_gesture_time = None
-            engine.init_obstacles(state)
-            if state.settings["sound_enabled"] and not sound_mgr.bgm_playing:
-                sound_mgr.start_bgm(state.settings["music_volume"])
+    # Mouse: PLAY AGAIN / MAIN MENU buttons
+    if ctx.mouse_clicked:
+        r = menu_screens.gameover_rects()
+        if in_rect(*ctx.mouse_pos, r["rematch"]):
+            _restart_game(ctx, state, sound_mgr)
+        elif in_rect(*ctx.mouse_pos, r["menu"]):
+            state.gesture_armed = False
+            state.start_gesture_time = None
+            state.game_state = "START"
