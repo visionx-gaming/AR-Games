@@ -1,142 +1,142 @@
-# Hand Gesture Ping Pong
+# Hand Pong
 
-An AR ping-pong game controlled entirely by hand gestures via webcam. Built with Python, OpenCV, MediaPipe, and Pygame.
+An arcade ping-pong game you play with your hands. A webcam tracks your hands (MediaPipe), and the
+game draws everything itself (OpenCV + NumPy into a pygame/SDL window). Built for a walk-up office
+tournament, but it is a normal game too: three modes, a CPU opponent, two-player, themes, settings.
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![OpenCV](https://img.shields.io/badge/OpenCV-4.8%2B-green) ![MediaPipe](https://img.shields.io/badge/MediaPipe-0.10%2B-orange)
+- Python 3.11, Windows (tested), webcam recommended (the game is playable with the keyboard alone)
+- Everything runs on the CPU. No GPU needed. All sounds and music are synthesised at start-up.
 
----
-
-## Features
-
-- **Hand Gesture Control** — Move your hands in front of the webcam to control the paddles. No controllers needed.
-- **2-Player & AI Mode** — Play with a friend (both hands on one webcam) or against an adaptive AI opponent.
-- **3 Game Modes** — Classic (first to N points), Survival (keep the rally alive), Time Attack (most points in 60s).
-- **Power-Ups** — Big Paddle, Speed Boost, Slow Motion, Multi Ball — collected by hitting the ball into them.
-- **Arcade UI** — Neon glow effects, animated backgrounds, per-player colored scores with flash animation.
-- **8-bit Procedural Audio** — All sound effects and music are synthesized at runtime (no audio files required). Separate music and SFX volume controls.
-- **Lobby Music** — Ambient attract-mode music plays on the start screen; switches to game BGM when a match starts.
-- **Mouse & Keyboard Support** — Navigate all menus with mouse hover/click or keyboard. Hand gestures are the third input method.
-- **Adaptive Hand Tracking** — Works at close and far distances; left/right hands assigned by screen position (immune to MediaPipe label flipping).
-- **Combo System** — Consecutive rally hits build a combo multiplier displayed near the ball.
-- **Persistent Stats** — High scores, games played, and best combo saved to `stats.json`.
-- **Fullscreen Support** — Toggle with `F`; aspect ratio is preserved with letterboxing.
-- **Color Themes** — 4 themes: Neon, Retro, Ice, Fire.
-- **Optional Obstacles** — Bouncing blocks that deflect the ball for an extra challenge.
-
----
-
-## Requirements
-
-- Python 3.9 or later
-- Webcam
+## Run it
 
 ```
-opencv-python>=4.8.0
-mediapipe>=0.10.0
-pygame>=2.6.0
-numpy>=1.24.0
-screeninfo>=0.8        # optional — used for fullscreen resolution detection
+venv\Scripts\python.exe main.py                       # normal game
+venv\Scripts\python.exe main.py --event               # tournament qualifier (also in the main menu)
+venv\Scripts\python.exe main.py --finals              # tournament finals    (also in the main menu)
+run_tests.bat                                         # checks everything, about 30 seconds
 ```
 
----
+First time on a new machine:
 
-## Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/visionx-gaming/AR-Games.git
-cd AR-Games/hand-gesture-ping-pong
-
-# 2. Create and activate a virtual environment (recommended)
+```
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS / Linux
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Run the game
-python main.py
+venv\Scripts\pip install -r requirements.txt
 ```
 
----
+| Flag | Meaning |
+|------|---------|
+| `--event` | Start on the qualifier leaderboard |
+| `--finals` | Start on the finals bracket |
+| `--restart-finals` | With `--finals`: throw away the saved bracket and build a new one |
+| `--attempts N` | Qualifier attempts per person (default 1) |
+| `--difficulty easy\|medium\|hard` | CPU difficulty for tournament runs (default medium; from the menu it uses your Settings) |
+| `--no-camera-feed` | Hide the camera picture for this run (tracking still works) |
+| `--no-fist-pause` | Kept for compatibility: the two-fists pause gesture is off by default |
 
-## Controls
+## Playing
 
-### Hand Gestures (primary)
-| Gesture | Action |
-|---------|--------|
-| Raise both hands | Hold 1 second on start/game-over screen to begin/restart |
-| Move hand up/down | Move your paddle |
-| Both fists simultaneously | Pause / unpause the game |
-| Open both palms (while paused) | Resume |
+**Modes** (main menu): Classic (first to N points), Survival (keep the rally alive), Time Attack
+(most points in 60 s). **Players**: 2 PLAYERS, CPU RIGHT (you on the left) or CPU LEFT (you on the
+right). Against the CPU the game gets harder the longer it runs (CPU LEVEL 1-5 shows under the score).
 
-### Keyboard
+**Hands:** move a hand up and down to move your paddle. On the main menu, show both hands for a second
+to start. With two players, the left hand on screen is player 1.
+
 | Key | Action |
 |-----|--------|
-| `Space` / `Enter` | Start game / restart |
-| `P` | Pause |
-| `R` | Resume from pause |
-| `ESC` | Open in-game menu (Resume, Settings, Quit to Menu, Quit) |
-| `F` | Toggle fullscreen |
-| `M` | Open settings |
-| `W` / `S` or `↑` / `↓` | Navigate menus |
-| `A` / `D` or `←` / `→` | Change setting value |
-| `Q` | Quit |
+| `Space` / `Enter` | Start / select |
+| `W` `S` `A` `D` or arrows | Menus, and paddles when playing from the keyboard |
+| `P` / `R` | Pause / resume |
+| `ESC` | In-game menu (or exit confirmation on the main menu) |
+| `M` | Settings |
+| `F` | Fullscreen |
+| `C` | Switch camera |
+| `V` | Camera picture on / off (tracking keeps working) |
+| `Tab` | Cycle 2 players / CPU right / CPU left (main menu) |
 
-### Mouse
-| Action | Effect |
-|--------|--------|
-| Hover over menu item | Highlights that item |
-| Left-click | Select item / advance setting |
-| Right-click (in settings) | Go back on setting value |
-| Click start banner | Start game |
-| Click restart banner | Restart game |
-| Click resume area (paused) | Resume |
+Settings (gameplay, audio, display, camera) are saved in `settings.json`. Display and camera rows
+follow whatever monitors and cameras are attached (resolution, monitor, camera, quality, rescan).
 
----
+## Event runbook (qualifier + finals)
 
-## Settings
+**Before the day**
+1. Plug in the camera and the monitor, run `run_tests.bat` once, then start the game and set the
+   display / camera in Settings (Display and Camera tabs). Check both hands are tracked.
+2. Choose the difficulty in Settings (it applies to the qualifier started from the menu), or launch
+   with `--event --difficulty easy|medium|hard`.
+3. Optional: `V` turns off the camera picture so players are not distracted.
 
-| Setting | Description |
-|---------|-------------|
-| Score to Win | Points needed to win in Classic mode (1–20) |
-| Difficulty | Easy / Medium / Hard — affects ball speed and AI speed |
-| Game Mode | Classic / Survival / Time Attack |
-| AI Opponent | Toggle AI for the right paddle (single-player mode) |
-| Color Theme | Neon / Retro / Ice / Fire |
-| Sound | Enable or disable all audio |
-| Music Volume | Background music volume (0–100%) |
-| SFX Volume | Sound effects volume (0–100%) |
-| Hand Skeleton | Show / hide MediaPipe landmark overlay |
-| Obstacles | Enable / disable bouncing obstacle blocks |
+**Qualifier** (`TOURNAMENT QUALIFIER` in the main menu, or `--event`)
+- Every player plays one 60-second Time Attack against the CPU (same settings for everyone, no
+  power-ups or obstacles). The organiser presses `Space`, the player types their name and presses `Enter`.
+- Ranking: best attempt by points scored minus conceded, then fewer conceded, then the longer rally.
+  Equal players share a rank. The leaderboard shows the top 10.
+- Every game is appended to `event_results.csv` (open it in Excel any time; if Excel has it locked, the
+  game keeps the rows and writes them on the next game).
+- `F` fullscreen and `C` camera work on the leaderboard. Players cannot reach the menu or quit.
+- To leave the tournament screens (organiser only): `ESC`, then `Y`. Scores stay saved.
 
----
+**Finals** (`TOURNAMENT FINALS` in the main menu, or `--finals`)
+- The bracket is built from the qualifier ranking: semi-finals 1 v 4 and 2 v 3, then the 3rd-place
+  match and the final. Matches are first to 5 (sudden-death playoffs to 3 break ties for the last seat).
+- The next match is shown on screen with a hand check for both players. `Space` / `Enter` starts it.
+- **Withdraw a player:** press `W`, pick the player with `1`-`9`, confirm with `Y` (`N` / `ESC` cancels).
+  The next ranked player takes the seat, or the opponent advances by walkover.
+- The bracket is saved after every match in `finals_state.json`, so you can close and reopen the game.
+  Results go to `finals_results.csv`. Start over with `--finals --restart-finals`.
 
-## Project Structure
+**Files the game writes** (all in the project folder, all ignored by git)
+
+| File | Contents |
+|------|----------|
+| `settings.json`, `stats.json` | Your settings, high scores |
+| `game_history.csv`, `point_log.csv` | Every normal game, and every point of it |
+| `event_results.csv` | Qualifier games |
+| `finals_results.csv`, `finals_state.json` | Finals matches and the live bracket |
+| `crash_log.txt` | Only exists after a crash (empty ones are removed on exit) |
+
+**If something goes wrong**
+- No hand tracking: check lighting; `C` switches camera; Settings > Camera > RESCAN.
+- Game closed unexpectedly: restart it. Scores and the bracket are already on disk; read `crash_log.txt`.
+- A finals player no-shows: withdraw them (`W`).
+- Do not delete `event_results.csv` during the event; copy it somewhere safe at breaks.
+
+## Project layout
 
 ```
-hand-gesture-ping-pong/
-├── main.py                 # Game loop, window, input dispatch
-└── game/
-    ├── config.py           # All constants and color themes
-    ├── state.py            # GameState, Ball, PowerUpItem, Obstacle data classes
-    ├── engine.py           # Physics, collision, AI, power-up logic
-    ├── renderer.py         # All OpenCV drawing functions
-    ├── screens.py          # Overlay screens (start, settings, menu, game over, etc.)
-    ├── handlers.py         # Per-state handler functions and FrameCtx dataclass
-    ├── hand_tracking.py    # Background-threaded MediaPipe hand detection
-    ├── sound.py            # Procedural 8-bit SFX and music synthesis
-    ├── effects.py          # Particles, shockwaves, screen shake, floating text
-    ├── stats.py            # Stats load/save to stats.json
-    └── utils.py            # lerp, scale_color, letterbox_frame, screen resolution
+main.py                  window, camera, per-frame loop, hotkeys, command-line flags
+game/
+  config.py              constants, colour themes
+  state.py               GameState and the small data classes
+  engine.py              paddles, CPU, ball physics, collisions, scoring
+  difficulty.py          the vs-CPU difficulty ramp and CPU level
+  powerups.py            power-ups and obstacle blocks
+  handlers.py            per-screen frame handlers (menu, play, pause, game over ...)
+  event_handlers.py      tournament screens' handlers (leaderboard, name, finals)
+  flow.py                FrameCtx and helpers shared by the handlers
+  modes.py               enter / leave the qualifier and finals at run time
+  event.py, finals.py    qualifier leaderboard, finals bracket (with withdrawals)
+  history.py, stats.py   CSV result files, settings and stats files
+  ui.py                  design tokens, text, panels, cursor and other drawing helpers
+  widgets.py             menu widgets (MenuView, tabs)
+  menu_screens.py        main menu, in-game menu, pause, countdown, game over, dialogs
+  settings_screen.py     the settings screen and change_setting()
+  event_screens.py       leaderboard, finals bracket, tournament dialogs
+  hud.py                 in-game HUD and overlays
+  renderer.py            background, court, ball, paddles, effects drawing
+  gfx.py                 resolution-independent drawing primitives
+  display.py, system.py  SDL window / monitors, live display and camera control
+  camera.py              threaded camera capture and camera scanning
+  hand_tracking.py       MediaPipe hand detection, smoothing and prediction
+  sound.py, effects.py   synthesised audio, particles and screen shake
+  crashlog.py, keys.py, font.py, utils.py
+assets/fonts/            Rajdhani and Press Start 2P
+tests/                   verify_game.py (the checks) and run_tests.py (the runner)
 ```
 
----
+## Tests
 
-## Tips
-
-- **Distance** — The hand tracker self-calibrates over ~20 seconds. If paddle movement feels off, move your hand across its full range once to calibrate.
-- **Lighting** — Good front-facing lighting improves hand detection significantly.
-- **Two players on one webcam** — Stand side by side. The leftmost detected hand always controls the left paddle regardless of which hand MediaPipe labels it.
-- **Power-ups** — Hit the ball directly into a floating power-up icon to collect it. Big Paddle goes to the side that last touched the ball.
+`run_tests.bat` runs about 400 checks in a separate process and writes only to a temporary folder.
+It also fingerprints `settings.json`, `stats.json` and the result files before and after, and fails
+if a test touched them. `run_tests.bat -v` shows every check, `-k "text"` filters by name. Add new
+checks with `check("what should be true", condition)` in `tests/verify_game.py`.
