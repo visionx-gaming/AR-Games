@@ -32,6 +32,37 @@ def spawn_particles(state, x, y, color, count=10):
         })
 
 
+_hue_cursor = [0]
+
+
+def hit_color(hue):
+    """Vivid BGR colour for an OpenCV hue (0-179)."""
+    return tuple(int(c) for c in cv2.cvtColor(np.uint8([[[hue % 180, 235, 255]]]), cv2.COLOR_HSV2BGR)[0, 0])
+
+
+def paddle_hit(state, side, ball, speed_frac=0.5):
+    """Paddle strike: the paddle lights up in a fresh colour each hit, and a fan of
+    sparks in that colour sprays out the way the ball is leaving."""
+    _hue_cursor[0] = (_hue_cursor[0] + 37) % 180          # every hit a different colour
+    hue = _hue_cursor[0]
+    strength = max(0.4, min(1.0, speed_frac))
+    state.paddle_flash[side] = (state.current_time, hue, strength)
+    col = hit_color(hue)
+    d = 1 if side == "left" else -1                       # direction the ball leaves in
+    for i in range(int(8 + 10 * strength)):
+        a = random.uniform(-1.1, 1.1)
+        sp = random.uniform(200, 520) * (0.7 + 0.5 * strength)
+        life = random.uniform(0.25, 0.55)
+        state.particles.append({
+            "x": float(ball.x), "y": float(ball.y),
+            "vx": math.cos(a) * sp * d, "vy": math.sin(a) * sp,
+            "life": life, "max_life": life,
+            "color": hit_color(hue + random.randint(-14, 14)),
+            "radius": random.randint(2, 5),
+        })
+    add_shockwave(state, ball.x, ball.y, col)
+
+
 def add_shockwave(state, x, y, color):
     """Add an expanding shockwave ring effect."""
     state.shockwaves.append(Shockwave(x, y, color, state.current_time))

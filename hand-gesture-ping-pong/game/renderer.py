@@ -1,16 +1,16 @@
 """Renderer: all OpenCV drawing functions for game objects and visual effects."""
 
-import cv2
 import numpy as np
 import math
+from PIL import Image, ImageDraw, ImageFilter
+from game import font as _font
+from game import gfx
+import cv2 as _cv                # real cv2: pixel-space operations and constants
 from game.config import (
-    WINDOW_WIDTH, WINDOW_HEIGHT, BALL_RADIUS, PADDLE_WIDTH,
-    LEFT_PADDLE_X, RIGHT_PADDLE_X, TRAIL_LENGTH,
-    HIT_FLASH_DURATION, SHOCKWAVE_DURATION, SHOCKWAVE_MAX_RADIUS,
-    FLOATING_TEXT_DURATION, FLOATING_TEXT_SPEED, COMBO_DISPLAY_DURATION,
-    POWERUP_TYPES, POWERUP_RADIUS, GLOW_DOWNSCALE,
-    GAME_MODE_NAMES, TIME_ATTACK_DURATION,
-    get_powerup_color,
+    WINDOW_WIDTH, WINDOW_HEIGHT, BALL_RADIUS, PADDLE_WIDTH, LEFT_PADDLE_X, RIGHT_PADDLE_X,
+    HIT_FLASH_DURATION, SHOCKWAVE_DURATION, SHOCKWAVE_MAX_RADIUS, FLOATING_TEXT_DURATION,
+    FLOATING_TEXT_SPEED, COMBO_DISPLAY_DURATION, POWERUP_TYPES, POWERUP_RADIUS, GLOW_DOWNSCALE,
+    PADDLE_FLASH_SECONDS, get_powerup_color,
 )
 from game.utils import scale_color, brighten_color
 
@@ -21,16 +21,18 @@ from game.utils import scale_color, brighten_color
 
 def create_scanline_overlay():
     """Create a subtle CRT scanline overlay."""
-    overlay = np.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=np.uint8)
-    for y in range(0, WINDOW_HEIGHT, 3):
+    w, h = gfx.frame_size()
+    overlay = np.zeros((h, w, 3), dtype=np.uint8)
+    for y in range(0, h, max(2, gfx.px(3))):
         overlay[y, :] = [6, 6, 6]
     return overlay
 
 
 def create_vignette():
     """Create a corner-darkening vignette overlay."""
-    Y, X = np.ogrid[:WINDOW_HEIGHT, :WINDOW_WIDTH]
-    cx, cy = WINDOW_WIDTH / 2.0, WINDOW_HEIGHT / 2.0
+    w, h = gfx.frame_size()
+    Y, X = np.ogrid[:h, :w]
+    cx, cy = w / 2.0, h / 2.0
     dx = (X.astype(np.float32) - cx) / cx
     dy = (Y.astype(np.float32) - cy) / cy
     d = np.sqrt(dx * dx + dy * dy)
@@ -45,100 +47,274 @@ def create_vignette():
 
 def draw_rounded_rect(frame, x, y, w, h, color, radius=10):
     """Draw a filled rounded rectangle."""
-    cv2.rectangle(frame, (x + radius, y), (x + w - radius, y + h), color, -1)
-    cv2.rectangle(frame, (x, y + radius), (x + w, y + h - radius), color, -1)
-    cv2.circle(frame, (x + radius, y + radius), radius, color, -1)
-    cv2.circle(frame, (x + w - radius, y + radius), radius, color, -1)
-    cv2.circle(frame, (x + radius, y + h - radius), radius, color, -1)
-    cv2.circle(frame, (x + w - radius, y + h - radius), radius, color, -1)
+    gfx.rectangle(frame, (x + radius, y), (x + w - radius, y + h), color, -1)
+    gfx.rectangle(frame, (x, y + radius), (x + w, y + h - radius), color, -1)
+    gfx.circle(frame, (x + radius, y + radius), radius, color, -1)
+    gfx.circle(frame, (x + w - radius, y + radius), radius, color, -1)
+    gfx.circle(frame, (x + radius, y + h - radius), radius, color, -1)
+    gfx.circle(frame, (x + w - radius, y + h - radius), radius, color, -1)
 
 
 def draw_overlay(frame, alpha=0.5):
     """Draw a semi-transparent dark overlay over the frame (in-place)."""
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    # Blending with black is just darkening: scale the frame in place
+    _cv.convertScaleAbs(frame, dst=frame, alpha=1.0 - alpha)
+
+
+def _scale_to_px(scale: float) -> int:
+    """Map legacy cv2 scale float → Press Start 2P pixel size.
+
+    A continuous formula rather than a coarse bucket table: pulsing/animated
+    scale values (combo pop, countdown beat, score-flash growth) now render
+    at a genuinely different size each step instead of several distinct
+    inputs collapsing onto the same fixed pixel size."""
+    return max(6, round(scale * 15 + 3))
+
+
+_TEXT_CACHE: dict = {}
+_CACHE_LIMIT = 300
+
+
+def _cache_put(cache: dict, key, value) -> None:
+    if len(cache) >= _CACHE_LIMIT:
+        del cache[next(iter(cache))]
+    cache[key] = value
+
+
+def _prep_tile(arr):
+    """RGBA text image -> (BGR pixels, alpha weights, 1-alpha weights), computed
+    once when the text is cached so drawing it is a single blend call."""
+    a = arr[:, :, 3].astype(np.float32) * (1.0 / 255.0)
+    return np.ascontiguousarray(arr[:, :, 2::-1]), a, 1.0 - a
+
+
+def _composite(frame, tile, fx: int, fy: int) -> None:
+    """Alpha-composite a prepared text tile (see _prep_tile) onto the frame in place."""
+    bgr, wa, wb = tile
+    h_f, w_f = frame.shape[:2]
+    th, tw = wa.shape
+    sx1 = max(0, -fx);         sy1 = max(0, -fy)
+    ex  = min(fx + tw, w_f)
+    ey  = min(fy + th, h_f)
+    if ex <= max(0, fx) or ey <= max(0, fy):
+        return
+    sx2 = sx1 + ex - max(0, fx)
+    sy2 = sy1 + ey - max(0, fy)
+    fx1, fy1 = max(0, fx), max(0, fy)
+    if (sx1, sy1, sx2, sy2) != (0, 0, tw, th):          # clipped at a frame edge
+        bgr = np.ascontiguousarray(bgr[sy1:sy2, sx1:sx2])
+        wa = np.ascontiguousarray(wa[sy1:sy2, sx1:sx2])
+        wb = np.ascontiguousarray(wb[sy1:sy2, sx1:sx2])
+    roi = frame[fy1:ey, fx1:ex]
+    roi[:] = _cv.blendLinear(bgr, np.ascontiguousarray(roi), wa, wb)
 
 
 def draw_arcade_text(frame, text, cx, y, scale, color, thickness=3, shadow=True):
-    """Center-aligned bold arcade text with layered shadow + glow effect.
+    """Center-aligned Press Start 2P text with neon glow.  y = baseline.
 
-    Achieves a chunky neon look by rendering the same text four times:
-    black drop-shadow, wide dim halo, solid fill, bright inner highlight.
+    thickness > 3 adds a pixel stroke around the glyph for extra boldness
+    (e.g. titles, score-flash emphasis); thickness <= 3 is normal weight.
     """
-    font = cv2.FONT_HERSHEY_DUPLEX
-    (tw, _), _ = cv2.getTextSize(text, font, scale, thickness)
-    x = cx - tw // 2
-    if shadow:
-        cv2.putText(frame, text, (x + 3, y + 4), font, scale, (0, 0, 0), thickness + 6)
-    cv2.putText(frame, text, (x, y), font, scale, scale_color(color, 0.22), thickness + 12)
-    cv2.putText(frame, text, (x, y), font, scale, scale_color(color, 0.55), thickness + 5)
-    cv2.putText(frame, text, (x, y), font, scale, color, thickness)
-    cv2.putText(frame, text, (x, y), font, scale, brighten_color(color, 70), max(1, thickness - 2))
+    S   = gfx.SCALE
+    px  = max(6, round(_scale_to_px(scale) * S))     # glyphs are re-rendered at native size
+    r, g, b = color[2], color[1], color[0]          # BGR → RGB
+    stroke = max(0, round((int(thickness) - 3) * S)) if int(thickness) > 3 else 0
 
+    key = (text, px, r, g, b, shadow, stroke, round(S * 100))
+    if key not in _TEXT_CACHE:
+        fnt  = _font.get(px)
+        bbox = fnt.getbbox(text)                     # (x0, y0, x1, y1)
+        tw   = bbox[2] - bbox[0]
+        th   = bbox[3] - bbox[1]
+        pad  = round(7 * S) + stroke
+        sw, sh = tw + pad * 2, th + pad * 2
 
-def draw_panel(frame, x, y, w, h, border_color, fill=(12, 12, 20), alpha=0.80, radius=10):
-    """Semi-transparent rounded panel with a three-layer neon border."""
-    overlay = frame.copy()
-    draw_rounded_rect(overlay, x, y, w, h, fill, radius)
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-    cv2.rectangle(frame, (x - 2, y - 2), (x + w + 2, y + h + 2),
-                  scale_color(border_color, 0.28), 5)
-    cv2.rectangle(frame, (x, y), (x + w, y + h), border_color, 2)
-    cv2.rectangle(frame, (x + 1, y + 1), (x + w - 1, y + h - 1),
-                  brighten_color(border_color, 55), 1)
+        # Silhouette mask for glow layers (stroke widens the glyph)
+        sil = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(sil).text(
+            (pad - bbox[0], pad - bbox[1]), text, font=fnt, fill=255,
+            stroke_width=stroke, stroke_fill=255)
 
+        surf = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
 
-def draw_neon_line(frame, x1, y1, x2, y2, color, thickness=2):
-    """Neon line with outer glow halo and bright core."""
-    cv2.line(frame, (x1, y1), (x2, y2), scale_color(color, 0.20), thickness + 6)
-    cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
-    cv2.line(frame, (x1, y1), (x2, y2), brighten_color(color, 60), max(1, thickness - 1))
+        if shadow:
+            sh_mask = Image.new("L", (sw, sh), 0)
+            ImageDraw.Draw(sh_mask).text(
+                (pad - bbox[0] + max(1, round(2 * S)), pad - bbox[1] + max(1, round(3 * S))),
+                text, font=fnt, fill=160)
+            sh_layer = Image.new("RGBA", (sw, sh), (0, 0, 0, 255))
+            sh_layer.putalpha(sh_mask)
+            surf = Image.alpha_composite(surf, sh_layer)
+
+        # Outer glow (large blur, very dim)
+        g1 = Image.new("RGBA", (sw, sh), (r // 5, g // 5, b // 5, 255))
+        g1.putalpha(sil.filter(ImageFilter.GaussianBlur(5 * S)))
+        surf = Image.alpha_composite(surf, g1)
+
+        # Mid glow
+        g2 = Image.new("RGBA", (sw, sh), (r // 2, g // 2, b // 2, 255))
+        g2.putalpha(sil.filter(ImageFilter.GaussianBlur(2 * S)))
+        surf = Image.alpha_composite(surf, g2)
+
+        # Main fill
+        fill = Image.new("RGBA", (sw, sh), (r, g, b, 255))
+        fill.putalpha(sil)
+        surf = Image.alpha_composite(surf, fill)
+
+        tile = _prep_tile(np.array(surf))
+        _cache_put(_TEXT_CACHE, key, (tile, tw, th, pad))
+    else:
+        tile, tw, th, pad = _TEXT_CACHE[key]
+
+    # y is baseline; top of glyph = y - th; subtract pad for surface origin
+    _composite(frame, tile, round(cx * S) - tw // 2 - pad, round(y * S) - th - pad)
 
 
 # ===================================================================
 #  NEON GLOW HELPERS
 # ===================================================================
 
+# The bloom is drawn on a small layer (logical size / GLOW_DOWNSCALE, i.e. 320x180
+# whatever the render resolution), and only the areas that actually contain
+# glow sources are blurred, up-scaled and added.  Previously the whole frame was
+# down-scaled, blurred, up-scaled and added every frame - the single most
+# expensive step at 1080p.
+_GLOW_INV = 1.0 / GLOW_DOWNSCALE
+_GLOW_MARGIN = 8                 # blur kernel 15 reaches 7 px beyond a source
+_glow_boxes = []                 # glow-layer areas drawn into this frame
+_glow_up = {}                    # reusable up-scale buffers
+
+
+def create_glow_layer():
+    return np.zeros((WINDOW_HEIGHT // GLOW_DOWNSCALE, WINDOW_WIDTH // GLOW_DOWNSCALE, 3), np.uint8)
+
+
 def _draw_to_glow(glow_layer, center, radius, color):
-    """Draw a circular glow source."""
-    cv2.circle(glow_layer, center, radius + 4, color, -1)
+    """Draw a circular glow source (logical coordinates)."""
+    g = _GLOW_INV
+    cx, cy, r = center[0] * g, center[1] * g, (radius + 4) * g
+    _cv.circle(glow_layer, (round(cx), round(cy)), max(1, round(r)), color, -1)
+    _glow_boxes.append((cx - r, cy - r, cx + r, cy + r))
 
 
 def _draw_rect_to_glow(glow_layer, x, y, w, h, color):
-    """Draw a rectangular glow source."""
-    cv2.rectangle(glow_layer, (x - 2, y - 2), (x + w + 2, y + h + 2), color, -1)
+    """Draw a rectangular glow source (logical coordinates)."""
+    g = _GLOW_INV
+    x0, y0, x1, y1 = (x - 2) * g, (y - 2) * g, (x + w + 2) * g, (y + h + 2) * g
+    _cv.rectangle(glow_layer, (round(x0), round(y0)), (round(x1), round(y1)), color, -1)
+    _glow_boxes.append((x0, y0, x1, y1))
+
+
+def _merge_boxes(boxes):
+    """Union overlapping boxes so no area gets its glow added twice."""
+    merged = True
+    while merged:
+        merged = False
+        out = []
+        for b in boxes:
+            for o in out:
+                if b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3]:
+                    o[0], o[1] = min(o[0], b[0]), min(o[1], b[1])
+                    o[2], o[3] = max(o[2], b[2]), max(o[3], b[3])
+                    merged = True
+                    break
+            else:
+                out.append(list(b))
+        boxes = out
+    return boxes
 
 
 def apply_glow(frame, glow_layer):
-    """Blur the glow layer and additively composite onto the frame."""
-    small_w = WINDOW_WIDTH // GLOW_DOWNSCALE
-    small_h = WINDOW_HEIGHT // GLOW_DOWNSCALE
-    small = cv2.resize(glow_layer, (small_w, small_h))
-    blurred = cv2.GaussianBlur(small, (15, 15), 0)
-    blurred_full = cv2.resize(blurred, (WINDOW_WIDTH, WINDOW_HEIGHT))
-    cv2.add(frame, blurred_full, frame)
+    """Blur the glow sources drawn this frame and add them onto the frame."""
+    if not _glow_boxes:
+        return
+    gh, gw = glow_layer.shape[:2]
+    fh, fw = frame.shape[:2]
+    sx, sy = fw / gw, fh / gh
+    m = _GLOW_MARGIN
+    boxes = []
+    for x0, y0, x1, y1 in _glow_boxes:
+        b = [max(0, int(x0) - m), max(0, int(y0) - m),
+             min(gw, int(x1) + m + 1), min(gh, int(y1) + m + 1)]
+        if b[2] > b[0] and b[3] > b[1]:
+            boxes.append(b)
+    _glow_boxes.clear()
+    for x0, y0, x1, y1 in _merge_boxes(boxes):
+        blurred = _cv.GaussianBlur(glow_layer[y0:y1, x0:x1], (15, 15), 0,
+                                   borderType=_cv.BORDER_CONSTANT)
+        X0, Y0 = round(x0 * sx), round(y0 * sy)
+        X1, Y1 = min(fw, round(x1 * sx)), min(fh, round(y1 * sy))
+        if X1 <= X0 or Y1 <= Y0:
+            continue
+        size = (X1 - X0, Y1 - Y0)
+        up = _glow_up.get(size)
+        if up is None:
+            up = _glow_up[size] = np.empty((size[1], size[0], 3), np.uint8)
+            if len(_glow_up) > 64:
+                _glow_up.clear()
+                _glow_up[size] = up
+        _cv.resize(blurred, size, dst=up, interpolation=_cv.INTER_LINEAR)
+        roi = frame[Y0:Y1, X0:X1]
+        _cv.add(roi, up, dst=roi)
 
 
 # ===================================================================
 #  ANIMATED BACKGROUND
 # ===================================================================
 
-def draw_animated_bg(frame, state, theme):
-    """Dark overlay + slowly-scrolling grid lines."""
-    draw_overlay(frame, 0.55)
+# The camera picture is darkened to 45% (it used to be a 55% black overlay drawn
+# here every frame).  That is now done while copying the camera frame into the
+# render buffer: one pass over the pixels instead of a copy plus a darken pass.
+_BG_BRIGHTNESS = 0.45
 
+
+def prepare_background(camera_frame, dst):
+    """Copy the camera frame into the render buffer, darkened for the background."""
+    _cv.convertScaleAbs(camera_frame, dst=dst, alpha=_BG_BRIGHTNESS)
+
+
+_backdrop_cache = {}
+
+
+def prepare_plain_background(dst):
+    """Camera picture switched off: a dark, softly vignetted backdrop instead."""
+    key = dst.shape
+    bg = _backdrop_cache.get(key)
+    if bg is None:
+        import numpy as np
+        h, w = key[:2]
+        yy = np.linspace(-1, 1, h, dtype=np.float32)[:, None]
+        xx = np.linspace(-1, 1, w, dtype=np.float32)[None, :]
+        v = 1.0 - 0.45 * np.minimum(1.0, xx * xx * 0.6 + yy * yy * 0.9)
+        base = np.array([30, 24, 20], np.float32)          # BGR, a deep blue-black
+        bg = (v[:, :, None] * base).astype(np.uint8)
+        _backdrop_cache.clear()
+        _backdrop_cache[key] = bg
+    dst[:] = bg
+
+
+def draw_animated_bg(frame, state, theme):
+    """Slowly-scrolling grid over the (already darkened, see prepare_background)
+    camera picture.  Grid lines are full-length, axis-aligned and 1 logical px
+    wide, so they are written as array slices rather than gfx.line calls."""
     grid_color = theme["bg_grid"]
     spacing = 60
     offset = int(state.bg_offset) % spacing
+    S = gfx.SCALE
+    h, w = frame.shape[:2]
+    t = max(1, round(S))
 
     # Vertical lines (scrolling)
     for x in range(-spacing + offset, WINDOW_WIDTH + spacing, spacing):
-        cv2.line(frame, (x, 0), (x, WINDOW_HEIGHT), grid_color, 1)
+        X = round(x * S)
+        x0, x1 = max(0, X), min(w, X + t)
+        if x1 > x0:
+            frame[:, x0:x1] = grid_color
 
     # Horizontal lines (static)
     for y in range(0, WINDOW_HEIGHT, spacing):
-        cv2.line(frame, (0, y), (WINDOW_WIDTH, y), grid_color, 1)
+        Y = round(y * S)
+        frame[Y:Y + t, :] = grid_color
 
 
 # ===================================================================
@@ -154,16 +330,16 @@ def draw_court(frame, state, theme, glow_layer=None):
     dash, gap = 20, 15
     y = 0
     while y < WINDOW_HEIGHT:
-        cv2.line(frame, (cx, y), (cx, min(y + dash, WINDOW_HEIGHT)), court_color, 2)
+        gfx.line(frame, (cx, y), (cx, min(y + dash, WINDOW_HEIGHT)), court_color, 2)
         y += dash + gap
 
     # Center circle
-    cv2.circle(frame, (cx, WINDOW_HEIGHT // 2), 50, court_color, 2)
+    gfx.circle(frame, (cx, WINDOW_HEIGHT // 2), 50, court_color, 2)
 
     # Top / bottom border glow
     border_color = scale_color(theme["court"], 0.3)
-    cv2.line(frame, (0, 2), (WINDOW_WIDTH, 2), border_color, 2)
-    cv2.line(frame, (0, WINDOW_HEIGHT - 2), (WINDOW_WIDTH, WINDOW_HEIGHT - 2),
+    gfx.line(frame, (0, 2), (WINDOW_WIDTH, 2), border_color, 2)
+    gfx.line(frame, (0, WINDOW_HEIGHT - 2), (WINDOW_WIDTH, WINDOW_HEIGHT - 2),
              border_color, 2)
 
 
@@ -175,7 +351,7 @@ def draw_paused_balls(frame, state, theme):
     """Draw balls in PAUSED state — frozen snapshot with no trails or glow."""
     for ball in state.balls:
         if ball.alive:
-            cv2.circle(frame, (int(ball.x), int(ball.y)), BALL_RADIUS, theme["ball"], -1)
+            gfx.circle(frame, (ball.x, ball.y), BALL_RADIUS, theme["ball"], -1)
 
 
 def draw_balls(frame, state, theme, glow_layer=None):
@@ -189,19 +365,17 @@ def draw_balls(frame, state, theme, glow_layer=None):
             color = theme["ball_hit"]
         else:
             color = theme["ball"]
-        if not ball.is_main:
-            color = scale_color(color, 0.7)
 
-        center = (int(ball.x), int(ball.y))
+        center = (ball.x, ball.y)
 
         # Glow layers (outer → inner)
-        cv2.circle(frame, center, BALL_RADIUS + 12, scale_color(color, 0.10), -1)
-        cv2.circle(frame, center, BALL_RADIUS + 7,  scale_color(color, 0.20), -1)
-        cv2.circle(frame, center, BALL_RADIUS + 3,  scale_color(color, 0.35), -1)
+        gfx.circle(frame, center, BALL_RADIUS + 12, scale_color(color, 0.10), -1)
+        gfx.circle(frame, center, BALL_RADIUS + 7,  scale_color(color, 0.20), -1)
+        gfx.circle(frame, center, BALL_RADIUS + 3,  scale_color(color, 0.35), -1)
         # Core
-        cv2.circle(frame, center, BALL_RADIUS, color, -1)
+        gfx.circle(frame, center, BALL_RADIUS, color, -1)
         # Highlight
-        cv2.circle(frame, center, max(1, BALL_RADIUS - 6),
+        gfx.circle(frame, center, max(1, BALL_RADIUS - 6),
                    brighten_color(color, 60), -1)
 
         # Bloom on glow layer
@@ -220,48 +394,74 @@ def draw_ball_trails(frame, state, theme):
             color = theme["ball_hit"]
         else:
             color = theme["ball"]
-        if not ball.is_main:
-            color = scale_color(color, 0.5)
 
         # Dot trail
         for i, pos in enumerate(ball.trail):
             alpha = (i + 1) / len(ball.trail)
             r = max(2, int(BALL_RADIUS * alpha * 0.6))
-            cv2.circle(frame, (int(pos[0]), int(pos[1])),
-                       r, scale_color(color, alpha * 0.4), -1)
+            gfx.circle(frame, pos, r, scale_color(color, alpha * 0.4), -1)
 
         # Speed lines at high velocity
         speed = math.sqrt(ball.vx ** 2 + ball.vy ** 2)
         if speed > 500 and len(ball.trail) >= 3:
             for i in range(max(0, len(ball.trail) - 4), len(ball.trail) - 1):
-                p1 = (int(ball.trail[i][0]), int(ball.trail[i][1]))
-                p2 = (int(ball.trail[i + 1][0]), int(ball.trail[i + 1][1]))
+                p1, p2 = ball.trail[i], ball.trail[i + 1]
                 a = (i + 1) / len(ball.trail)
-                cv2.line(frame, p1, p2, scale_color(color, a * 0.3), 2)
+                gfx.line(frame, p1, p2, scale_color(color, a * 0.3), 2)
 
 
 # ===================================================================
 #  PADDLES
 # ===================================================================
 
+def _flash(state, side):
+    """(0..1 strength fading out, BGR hit colour) while a paddle is lit, else (0, None)."""
+    f = state.paddle_flash.get(side)
+    if f is None:
+        return 0.0, None
+    t = (state.current_time - f[0]) / PADDLE_FLASH_SECONDS
+    if not 0 <= t < 1:
+        return 0.0, None
+    from game.effects import hit_color
+    return (1 - t) ** 1.5 * f[2], hit_color(f[1] + int(t * 30))   # colour drifts as it fades
+
+
 def draw_paddles(frame, state, theme, glow_layer=None):
-    """Draw both paddles with neon glow."""
-    _draw_neon_paddle(frame, LEFT_PADDLE_X, int(state.left_paddle_y),
+    """Draw both paddles with neon glow; a struck paddle blazes in the hit colour."""
+    lf, lc = _flash(state, "left")
+    rf, rc = _flash(state, "right")
+    _draw_neon_paddle(frame, LEFT_PADDLE_X, state.left_paddle_y,
                       PADDLE_WIDTH, state.left_paddle_height,
-                      theme["left_paddle"], glow_layer)
-    _draw_neon_paddle(frame, RIGHT_PADDLE_X - PADDLE_WIDTH, int(state.right_paddle_y),
+                      theme["left_paddle"], glow_layer, lf, lc)
+    _draw_neon_paddle(frame, RIGHT_PADDLE_X - PADDLE_WIDTH, state.right_paddle_y,
                       PADDLE_WIDTH, state.right_paddle_height,
-                      theme["right_paddle"], glow_layer)
+                      theme["right_paddle"], glow_layer, rf, rc)
 
 
-def _draw_neon_paddle(frame, x, y, w, h, color, glow_layer=None):
-    """Draw a single paddle with outer glow + inner highlight."""
+def _blend(a, b, t):
+    return tuple(int(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def _draw_neon_paddle(frame, x, y, w, h, color, glow_layer=None, flash=0.0, flash_color=None):
+    """Draw a single paddle with outer glow + inner highlight (flash: 0..1 hit light-up)."""
+    if flash > 0:
+        hot = _blend(color, flash_color, min(1.0, flash * 1.6))
+        e = int(4 + 16 * flash)                              # glow swells, then settles
+        gfx.rectangle(frame, (x - e, y - e), (x + w + e, y + h + e), scale_color(hot, 0.14 + 0.2 * flash), -1)
+        gfx.rectangle(frame, (x - e // 2, y - e // 2), (x + w + e // 2, y + h + e // 2),
+                      scale_color(hot, 0.3 + 0.3 * flash), -1)
+        draw_rounded_rect(frame, x, y, w, h, hot, 8)
+        if w > 8 and h > 8:
+            draw_rounded_rect(frame, x + 3, y + 3, w - 6, h - 6, _blend(hot, (255, 255, 255), 0.35 + 0.55 * flash), 5)
+        if glow_layer is not None:
+            _draw_rect_to_glow(glow_layer, x - e // 2, y - e // 2, w + e, h + e, scale_color(hot, 0.35 + 0.5 * flash))
+        return
     # Outer glow
     g = 6
-    cv2.rectangle(frame, (x - g, y - g), (x + w + g, y + h + g),
+    gfx.rectangle(frame, (x - g, y - g), (x + w + g, y + h + g),
                   scale_color(color, 0.15), -1)
     g2 = 3
-    cv2.rectangle(frame, (x - g2, y - g2), (x + w + g2, y + h + g2),
+    gfx.rectangle(frame, (x - g2, y - g2), (x + w + g2, y + h + g2),
                   scale_color(color, 0.30), -1)
     # Core
     draw_rounded_rect(frame, x, y, w, h, color, 8)
@@ -288,7 +488,7 @@ def draw_shockwaves(frame, state):
         radius = int(SHOCKWAVE_MAX_RADIUS * progress)
         alpha = 1.0 - progress
         thickness = max(1, int(3 * alpha))
-        cv2.circle(frame, (sw.x, sw.y), radius,
+        gfx.circle(frame, (sw.x, sw.y), radius,
                    scale_color(sw.color, alpha * 0.6), thickness)
 
 
@@ -297,8 +497,7 @@ def draw_particles(frame, state):
     for p in state.particles:
         alpha = max(0, p["life"] / p["max_life"])
         r = max(1, int(p["radius"] * alpha))
-        cv2.circle(frame, (int(p["x"]), int(p["y"])),
-                   r, scale_color(p["color"], alpha), -1)
+        gfx.circle(frame, (p["x"], p["y"]), r, scale_color(p["color"], alpha), -1)
 
 
 def draw_floating_texts(frame, state):
@@ -308,12 +507,11 @@ def draw_floating_texts(frame, state):
         progress = elapsed / FLOATING_TEXT_DURATION
         if progress >= 1:
             continue
-        alpha = 1.0 - progress
+        alpha_q = round((1.0 - progress) * 8) / 8   # quantise → 8 alpha levels
         y_off = int(FLOATING_TEXT_SPEED * elapsed)
-        pos = (int(ft.x) - 15, int(ft.y) - y_off)
-        cv2.putText(frame, ft.text, pos,
-                    cv2.FONT_HERSHEY_DUPLEX, 1.2,
-                    scale_color(ft.color, alpha), 3)
+        draw_arcade_text(frame, ft.text,
+                         int(ft.x), int(ft.y) - y_off,
+                         1.2, scale_color(ft.color, alpha_q), thickness=2)
 
 
 def draw_combo(frame, state, theme):
@@ -353,19 +551,19 @@ def draw_powerups(frame, state, theme):
         center = (int(pu.x), int(pu.y))
 
         # Glow layers
-        cv2.circle(frame, center, radius + 8, scale_color(color, 0.15), -1)
-        cv2.circle(frame, center, radius + 4, scale_color(color, 0.30), -1)
-        cv2.circle(frame, center, radius, color, -1)
-        cv2.circle(frame, center, max(1, radius - 6),
+        gfx.circle(frame, center, radius + 8, scale_color(color, 0.15), -1)
+        gfx.circle(frame, center, radius + 4, scale_color(color, 0.30), -1)
+        gfx.circle(frame, center, radius, color, -1)
+        gfx.circle(frame, center, max(1, radius - 6),
                    brighten_color(color, 60), -1)
 
         # Label
         label = info["label"]
-        ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+        ts = _cv.getTextSize(label, _cv.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
         tx = int(pu.x) - ts[0] // 2
         ty = int(pu.y) + ts[1] // 2
-        cv2.putText(frame, label, (tx, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        gfx.putText(frame, label, (tx, ty),
+                    _cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
 
 # ===================================================================
@@ -378,14 +576,14 @@ def draw_obstacles(frame, state, theme):
         c = theme["obstacle"]
         ix, iy = int(obs.x), int(obs.y)
         # Glow
-        cv2.rectangle(frame, (ix - 3, iy - 3),
+        gfx.rectangle(frame, (ix - 3, iy - 3),
                       (ix + obs.w + 3, iy + obs.h + 3),
                       scale_color(c, 0.3), -1)
         # Core
-        cv2.rectangle(frame, (ix, iy),
+        gfx.rectangle(frame, (ix, iy),
                       (ix + obs.w, iy + obs.h), c, -1)
         # Border
-        cv2.rectangle(frame, (ix, iy),
+        gfx.rectangle(frame, (ix, iy),
                       (ix + obs.w, iy + obs.h),
                       brighten_color(c, 60), 2)
 
@@ -394,130 +592,13 @@ def draw_obstacles(frame, state, theme):
 #  HUD
 # ===================================================================
 
-def _draw_powerup_pills(frame, state, theme):
-    """Active power-up status as colored pills with depleting timer bars."""
-    t = state.current_time
-    items = []
-    for ptype, exp_t in state.active_effects.items():
-        rem = exp_t - t
-        if rem <= 0:
-            continue
-        base = ptype.replace("_left", "").replace("_right", "")
-        info = POWERUP_TYPES.get(base, {})
-        items.append((
-            info.get("label", base[:3].upper()),
-            rem,
-            info.get("duration", 5.0),
-            get_powerup_color(theme, base),
-        ))
-
-    pill_w, pill_h = 115, 26
-    px0 = WINDOW_WIDTH - pill_w - 8
-    for i, (label, rem, dur, color) in enumerate(items):
-        py = 92 + i * (pill_h + 6)
-        ov = frame.copy()
-        cv2.rectangle(ov, (px0, py), (px0 + pill_w, py + pill_h),
-                      scale_color(color, 0.18), -1)
-        cv2.addWeighted(ov, 0.72, frame, 0.28, 0, frame)
-        cv2.rectangle(frame, (px0, py), (px0 + pill_w, py + pill_h),
-                      scale_color(color, 0.65), 1)
-        bar_w = max(0, int((pill_w - 4) * rem / dur))
-        if bar_w > 0:
-            cv2.rectangle(frame,
-                          (px0 + 2, py + pill_h - 5),
-                          (px0 + 2 + bar_w, py + pill_h - 2),
-                          color, -1)
-        cv2.putText(frame, f"{label}  {rem:.1f}s",
-                    (px0 + 6, py + 17),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.43, color, 1)
-
-
-def draw_hud(frame, state, theme):
-    """Draw in-game HUD: arcade scores, player labels, flash, mode info, power-up pills."""
-    mode = state.settings["game_mode"]
-    cx = WINDOW_WIDTH // 2
-    t = state.current_time
-    _FLASH_DUR = 0.5
-
-    if mode == 1:                                      # Survival
-        draw_arcade_text(frame, f"RALLY  {state.survival_rally}",
-                         cx, 68, 1.8, (0, 255, 255), thickness=3)
-    else:
-        lx, rx = WINDOW_WIDTH // 4, 3 * WINDOW_WIDTH // 4   # 300, 900
-        lc, rc = theme["left_paddle"], theme["right_paddle"]
-
-        l_flash = max(0.0, 1.0 - (t - state.score_flash_time[0]) / _FLASH_DUR)
-        r_flash = max(0.0, 1.0 - (t - state.score_flash_time[1]) / _FLASH_DUR)
-
-        l_col = brighten_color(lc, int(l_flash * 130)) if l_flash > 0 else lc
-        r_col = brighten_color(rc, int(r_flash * 130)) if r_flash > 0 else rc
-
-        # Scores — scale and thickness pulse on flash
-        draw_arcade_text(frame, str(state.score[0]), lx, 65,
-                         2.2 + l_flash * 0.8, l_col,
-                         thickness=3 + int(l_flash * 2))
-        draw_arcade_text(frame, str(state.score[1]), rx, 65,
-                         2.2 + r_flash * 0.8, r_col,
-                         thickness=3 + int(r_flash * 2))
-
-        # P1 / P2 labels — below score baseline
-        p2_label = "AI" if state.settings["ai_enabled"] else "P2"
-        draw_arcade_text(frame, "P1", lx, 88, 0.52,
-                         scale_color(lc, 0.68), thickness=1, shadow=False)
-        draw_arcade_text(frame, p2_label, rx, 88, 0.52,
-                         scale_color(rc, 0.68), thickness=1, shadow=False)
-
-        # Center: VS divider (Classic) or countdown timer (Time Attack)
-        if mode == 2:
-            elapsed = t - state.play_start_time
-            remaining = max(0, TIME_ATTACK_DURATION - elapsed)
-            mins = int(remaining) // 60
-            secs = int(remaining) % 60
-            tc_col = (0, 0, 255) if remaining < 10 else (0, 200, 255)
-            draw_arcade_text(frame, f"{mins}:{secs:02d}",
-                             cx, 68, 1.6, tc_col, thickness=3)
-        else:
-            cv2.putText(frame, "VS", (cx - 14, 62),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (55, 55, 55), 1)
-
-    # Mode label + win condition (bottom center)
-    (tw, _), _ = cv2.getTextSize(GAME_MODE_NAMES[mode],
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-    cv2.putText(frame, GAME_MODE_NAMES[mode],
-                (cx - tw // 2, WINDOW_HEIGHT - 52),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (110, 110, 110), 1)
-    if mode == 0:
-        label = f"First to {state.settings['score_to_win']}"
-        (tw2, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-        cv2.putText(frame, label, (cx - tw2 // 2, WINDOW_HEIGHT - 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.44, (90, 90, 90), 1)
-
-    _draw_powerup_pills(frame, state, theme)
-
-
-def draw_global_hud(frame, fps_display):
-    """Draw FPS counter (top-left) and controls hint (dark bottom strip)."""
-    cv2.putText(frame, f"FPS:{int(fps_display)}", (8, 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 150, 0), 1)
-
-    hint = "ESC: Menu  |  F: Fullscreen  |  P: Pause  |  M: Settings"
-    (tw, _), _ = cv2.getTextSize(hint, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
-    ov = frame.copy()
-    cv2.rectangle(ov, (0, WINDOW_HEIGHT - 20), (WINDOW_WIDTH, WINDOW_HEIGHT),
-                  (0, 0, 0), -1)
-    cv2.addWeighted(ov, 0.55, frame, 0.45, 0, frame)
-    cv2.putText(frame, hint,
-                (WINDOW_WIDTH // 2 - tw // 2, WINDOW_HEIGHT - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (75, 75, 75), 1)
-
-
 # ===================================================================
 #  HAND SKELETONS
 # ===================================================================
 
 def draw_hand_skeletons(frame, state, hand_connections):
     """Draw MediaPipe hand landmarks and connections."""
-    h, w = frame.shape[:2]
+    w, h = WINDOW_WIDTH, WINDOW_HEIGHT      # logical space; gfx scales to the frame
     for side in ("Left", "Right"):
         lm = state.hand_landmarks.get(side)
         if lm is None:
@@ -525,70 +606,20 @@ def draw_hand_skeletons(frame, state, hand_connections):
         points = [(int(l.x * w), int(l.y * h)) for l in lm.landmark]
         color = (255, 200, 0) if side == "Left" else (0, 200, 255)
         for conn in hand_connections:
-            cv2.line(frame, points[conn[0]], points[conn[1]], color, 2)
+            gfx.line(frame, points[conn[0]], points[conn[1]], color, 2)
         for pt in points:
-            cv2.circle(frame, pt, 4, (255, 255, 255), -1)
+            gfx.circle(frame, pt, 4, (255, 255, 255), -1)
 
 
 # ===================================================================
 #  POST-PROCESSING
 # ===================================================================
 
-def draw_mouse_cursor(frame, mouse_pos, current_time=0.0):
-    """Draw an animated neon game-style arrow cursor.
-
-    Classic pointer shape with a pulsing glow and bright tip hotspot.
-    Tip (hotspot) is at mouse_pos.
-    """
-    mx, my = mouse_pos
-    if mx < 0 or mx >= WINDOW_WIDTH or my < 0 or my >= WINDOW_HEIGHT:
-        return
-
-    # abs(sin) gives a smooth 0→1→0 breathe rather than negative dips
-    pulse = 0.55 + 0.45 * abs(math.sin(current_time * 3.0))
-
-    # Classic pointer polygon — 7 points, tip at origin
-    #   Left edge goes straight down → diagonal notch → shaft → arrowhead right
-    pts = np.array([
-        [ 0,  0],   # tip (hotspot)
-        [ 0, 16],   # left edge, bottom
-        [ 4, 11],   # elbow notch (inner corner)
-        [ 4, 20],   # tail, bottom-left
-        [ 8, 20],   # tail, bottom-right
-        [ 8, 11],   # tail, top-right
-        [13, 11],   # arrowhead, outer right
-    ], dtype=np.int32) + np.array([[mx, my]])
-
-    # 1 — black drop shadow (shift 2,2)
-    cv2.fillPoly(frame, [pts + np.array([[2, 2]])], (0, 0, 0))
-
-    # 2 — two outer glow halos, expanded around the polygon centroid
-    c = pts.mean(axis=0)
-    for expand, dim in ((1.65, 0.09), (1.28, 0.22)):
-        g = (c + (pts - c) * expand).astype(np.int32)
-        cv2.fillPoly(frame, [g],
-                     (0, int(255 * dim * pulse), int(200 * dim * pulse)))
-
-    # 3 — dark body fill (keeps outline readable)
-    cv2.fillPoly(frame, [pts], (0, int(40 * pulse), int(32 * pulse)))
-
-    # 4 — neon outline
-    cv2.polylines(frame, [pts], True,
-                  (0, int(210 + 45 * pulse), int(165 + 35 * pulse)), 1)
-
-    # 5 — bright rim on the two lit edges of the arrowhead
-    rim = (0, int(160 + 95 * pulse), int(125 + 75 * pulse))
-    cv2.line(frame, (mx, my), (mx,      my + 16), rim, 1)
-    cv2.line(frame, (mx, my), (mx + 13, my + 11), scale_color(rim, 0.7), 1)
-
-    # 6 — pulsing tip: glow ring → neon dot → white hotspot
-    gr = 2 + int(2 * pulse)   # glow radius breathes 3 → 4 px
-    cv2.circle(frame, (mx, my), gr, (0, int(180 * pulse), int(140 * pulse)), -1)
-    cv2.circle(frame, (mx, my), 2,  (0, int(255 * pulse), int(200 * pulse)), -1)
-    cv2.circle(frame, (mx, my), 1,  (255, 255, 255), -1)
+def create_post_overlay():
+    """Scanlines + vignette merged into one overlay (a single subtract per frame)."""
+    return _cv.add(create_scanline_overlay(), create_vignette())
 
 
-def apply_post_processing(frame, scanline_overlay, vignette_overlay):
-    """Apply scanlines and vignette (in-place subtract)."""
-    cv2.subtract(frame, scanline_overlay, frame)
-    cv2.subtract(frame, vignette_overlay, frame)
+def apply_post_processing(frame, overlay):
+    """Apply the scanline/vignette overlay (in-place subtract)."""
+    _cv.subtract(frame, overlay, frame)
