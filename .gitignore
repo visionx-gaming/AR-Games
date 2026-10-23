@@ -4,6 +4,12 @@ venv
 # Per-user runtime data — not part of the codebase
 hand-gesture-ping-pong/settings.json
 hand-gesture-ping-pong/stats.json
+hand-gesture-ping-pong/game_history.csv
+hand-gesture-ping-pong/point_log.csv
+hand-gesture-ping-pong/event_results.csv
+hand-gesture-ping-pong/finals_results.csv
+hand-gesture-ping-pong/finals_state.json
+hand-gesture-ping-pong/crash_log.txt
 *.pyc
 *.env
 *.ipynb
