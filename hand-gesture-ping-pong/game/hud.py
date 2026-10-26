@@ -4,9 +4,7 @@ and the 'hand lost' warning.  Built on game.ui; replaces the old pixel-text HUD.
 import math
 
 from game import ui, difficulty
-from game.config import (
-    WINDOW_WIDTH, WINDOW_HEIGHT, TIME_ATTACK_DURATION, POWERUP_TYPES, get_powerup_color,
-)
+from game.config import WINDOW_WIDTH, WINDOW_HEIGHT, POWERUP_TYPES, get_powerup_color
 from game.utils import brighten_color
 
 _CARD_W, _CARD_H, _CARD_Y = 292, 66, 18
@@ -41,7 +39,7 @@ def _center_pill(frame, state, theme):
         ui.text(frame, "RALLY", cx, _CARD_Y + 16, 12, ui.TEXT_3, "center", "bold", spacing=2.4)
         ui.text(frame, str(state.survival_rally), cx, _CARD_Y + 43, 26, accent, "center", "pixel", shadow=True)
     elif mode == 2:                                            # Time Attack: clock
-        remaining = max(0.0, TIME_ATTACK_DURATION - state.game_time)
+        remaining = max(0.0, state.settings["time_limit"] - state.game_time)
         low = remaining < 10
         ui.panel(frame, cx - 75, _CARD_Y, 150, _CARD_H, 14, alpha=0.62,
                  border=ui.DANGER if low else None, border_alpha=0.6 if low else 0.22)

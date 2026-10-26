@@ -53,13 +53,13 @@ DIFFICULTY_NAMES = ["Easy", "Medium", "Hard"]
 DIFFICULTY_SPEEDS = [350, 450, 550]
 DIFFICULTY_AI_SPEEDS = [200, 350, 500]
 # vs-CPU games get harder the longer they run.  The ramp reaches full strength after
-# DIFFICULTY_RAMP_SECONDS of play (Time Attack ramps over its own 60 s, so a tournament
+# DIFFICULTY_RAMP_SECONDS of play (Time Attack ramps over its own time limit, so a tournament
 # run is hardest at the buzzer).  Start/end multipliers on the CPU's speed and aim error,
 # and on the ball's speed.
 PADDLE_FLASH_SECONDS = 0.45     # how long a paddle glows after a hit
 DIFFICULTY_RAMP_SECONDS = 90      # normal games: full strength after this long ...
 RAMP_PER_POINT = 0.12             # ... and every point scored pushes it along too
-TIME_ATTACK_RAMP_SECONDS = 40     # Time Attack (tournament) is at full strength 40 s into its 60 s
+TIME_ATTACK_RAMP_FRACTION = 2 / 3  # Time Attack is at full strength two thirds of the way through its time limit
 RAMP_AI_SPEED = (1.0, 1.9)
 RAMP_AI_ERROR = (1.0, 0.3)
 RAMP_BALL_SPEED = (1.0, 1.5)
@@ -154,7 +154,8 @@ FINALS_RESULT_SECONDS = 15      # how long a match result stays up
 #  GAME MODES
 # =================================================================
 GAME_MODE_NAMES = ["Classic", "Survival", "Time Attack"]
-TIME_ATTACK_DURATION = 60
+TIME_ATTACK_DURATION = 60            # default time limit; the live value is settings["time_limit"]
+TIME_LIMIT_MIN, TIME_LIMIT_MAX, TIME_LIMIT_STEP = 15, 300, 15
 
 # =================================================================
 #  COLOR THEMES  (BGR format for OpenCV)

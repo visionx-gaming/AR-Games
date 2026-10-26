@@ -8,6 +8,7 @@ being silently overwritten.
 
 import json
 import os
+import time
 import tempfile
 
 from game.config import COLOR_THEMES
@@ -38,6 +39,7 @@ DEFAULT_SETTINGS = {
     "show_camera_feed":   True,
     "fist_pause_enabled": False,
     "player_side":        0,
+    "time_limit":         60,
 }
 
 # key -> (min, max) for ints; bool settings are listed in _BOOL_SETTINGS
@@ -45,6 +47,7 @@ _INT_RANGES = {
     "score_to_win": (1, 20),
     "difficulty":   (0, 2),
     "game_mode":    (0, 2),
+    "time_limit":   (15, 300),       # Time Attack / qualifier length in seconds
     "player_side":  (0, 1),          # vs CPU: 0 = you play the left paddle, 1 = the right
     "color_theme":  (0, len(COLOR_THEMES) - 1),
     "music_volume": (0, 100),
@@ -129,7 +132,14 @@ def _write_json(path, data):
         fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        os.replace(tmp_path, path)
+        for attempt in range(5):                  # Windows can briefly lock the target (antivirus, an editor)
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     except OSError as e:
         if tmp_path:
             try:

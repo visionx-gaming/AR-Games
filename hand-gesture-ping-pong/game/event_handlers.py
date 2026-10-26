@@ -5,11 +5,12 @@
 """
 
 from game import modes
-from game.config import EVENT_RESULT_SECONDS, FINALS_RESULT_SECONDS
+from game.config import (EVENT_RESULT_SECONDS, FINALS_RESULT_SECONDS, TIME_LIMIT_MAX, TIME_LIMIT_MIN,
+                         TIME_LIMIT_STEP)
 from game import event_screens, menu_screens, renderer
 from game import history, keys, stats as stats_mod
 from game.flow import FrameCtx, do_start_game, in_rect
-from game.stats import record_game_result, clean_name, NAME_CHARS, NAME_MAX_LEN, set_event_overrides
+from game.stats import record_game_result, save_settings, clean_name, NAME_CHARS, NAME_MAX_LEN, set_event_overrides
 
 
 def _help_overlay(ctx: FrameCtx, state) -> bool:
@@ -53,6 +54,13 @@ def handle_event_home(ctx: FrameCtx, state, stats, sound_mgr) -> None:
         return
     if _tournament_exit_dialog(ctx, state, sound_mgr):
         return
+    if ctx.key in (ord('-'), ord('+'), ord('=')):             # organiser: game length, 15 s steps
+        step = -TIME_LIMIT_STEP if ctx.key == ord('-') else TIME_LIMIT_STEP
+        lim = max(TIME_LIMIT_MIN, min(TIME_LIMIT_MAX, state.settings["time_limit"] + step))
+        if lim != state.settings["time_limit"]:
+            state.settings["time_limit"] = lim
+            save_settings(state.settings)
+            sound_mgr.play_menu_tick()
 
     # Keyboard / mouse only: bystanders walking past with their hands up must
     # not be able to start a game with someone else's name (or none).

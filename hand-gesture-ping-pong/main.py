@@ -34,7 +34,7 @@ crashlog.install()          # unhandled + native crashes are recorded in crash_l
 
 _parser = argparse.ArgumentParser(description="Hand Pong")
 _parser.add_argument("--event", action="store_true",
-                     help="tournament mode: walk-up 60 s Time Attack vs CPU with a live leaderboard")
+                     help="tournament mode: walk-up Time Attack vs CPU with a live leaderboard (length: --time)")
 _parser.add_argument("--finals", action="store_true",
                      help="finals: top-4 knockout bracket seeded from the qualifier (event_results.csv)")
 _parser.add_argument("--restart-finals", action="store_true",
@@ -43,6 +43,8 @@ _parser.add_argument("--attempts", type=int, default=EVENT_MAX_ATTEMPTS,
                      help="attempts allowed per person in event mode (default %(default)s)")
 _parser.add_argument("--difficulty", choices=("easy", "medium", "hard"), default="medium",
                      help="CPU difficulty in event mode (default %(default)s)")
+_parser.add_argument("--time", type=int, default=None, metavar="SECONDS",
+                     help="Time Attack / qualifier game length in seconds, 15-300 (this run only; default: the saved setting, 60)")
 _parser.add_argument("--no-camera-feed", action="store_true",
                      help="hide the camera picture for this run (tracking still works; not saved)")
 _parser.add_argument("--no-fist-pause", action="store_true",
@@ -65,13 +67,6 @@ sound_mgr.set_sfx_volume(state.settings["sfx_volume"])
 if not state.settings["sound_enabled"]:
     sound_mgr.update_enabled(False)
 
-if args.no_fist_pause:
-    # Tournament: an accidental double fist must never interrupt a match (P still pauses)
-    set_event_overrides(state.settings, {"fist_pause_enabled": False})
-
-if args.no_camera_feed:
-    set_event_overrides(state.settings, {"show_camera_feed": False})
-
 if args.event and not args.finals:
     modes.enter_qualifier(state, {"easy": 0, "medium": 1, "hard": 2}[args.difficulty], args.attempts)
     print(f"EVENT MODE: Time Attack vs CPU ({args.difficulty}), {state.event_max_attempts} attempt(s) "
@@ -81,6 +76,18 @@ if args.finals:
     modes.enter_finals(state, {"easy": 0, "medium": 1, "hard": 2}[args.difficulty], args.restart_finals)
     print("FINALS:", state.finals_error or
           f"bracket ready, {len(state.finals.results)} match(es) already played.")
+
+# Run-only options go last: entering a tournament starts from the player's own settings,
+# so anything set before it would be wiped.
+if args.no_fist_pause:
+    # Tournament: an accidental double fist must never interrupt a match (P still pauses)
+    set_event_overrides(state.settings, {"fist_pause_enabled": False})
+
+if args.time is not None:
+    set_event_overrides(state.settings, {"time_limit": max(15, min(300, args.time))})
+
+if args.no_camera_feed:
+    set_event_overrides(state.settings, {"show_camera_feed": False})
 
 # Also makes the process DPI-aware, which must happen before the window exists
 detect_screen_resolution()

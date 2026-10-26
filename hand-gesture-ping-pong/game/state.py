@@ -113,6 +113,7 @@ class GameState:
             "show_camera_feed": True,
             "fist_pause_enabled": False,
             "player_side": 0,
+            "time_limit": 60,
             "camera_index": 0,
             "selected_setting": 0,
         }

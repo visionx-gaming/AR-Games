@@ -5,7 +5,7 @@ import math
 from game import ui, widgets
 from game.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, EVENT_TITLE, EVENT_LEADERBOARD_ROWS, EVENT_RESULT_SECONDS,
-    FINALS_RESULT_SECONDS, TIME_ATTACK_DURATION, get_theme,
+    FINALS_RESULT_SECONDS, get_theme,
 )
 from game.renderer import draw_overlay
 from game.stats import clean_name
@@ -41,7 +41,7 @@ def show_event_home(frame, state):
     draw_overlay(frame, 0.52)
 
     _title(frame, EVENT_TITLE.replace("  ", " "), 72, accent)
-    ui.text(frame, f"{TIME_ATTACK_DURATION} SECONDS   -   BEAT THE CPU   -   BEST SCORE WINS", CX, 120, 16,
+    ui.text(frame, f"{state.settings['time_limit']} SECONDS   -   BEAT THE CPU   -   BEST SCORE WINS", CX, 120, 16,
             ui.TEXT_2, "center", "bold", spacing=3)
 
     ranking = board.ranking()
@@ -90,7 +90,7 @@ def show_event_home(frame, state):
         ui.text(frame, str(e["attempts"]), cols["tries"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
 
     _cta(frame, "PRESS SPACE TO PLAY", "SPACE", 628, accent, now)
-    ui.hints(frame, [("H", "How to play"), ("ESC", "Organiser: leave"), ("F", "Fullscreen"), ("C", "Camera")], y=30)
+    ui.hints(frame, [("H", "How to play"), ("- +", "Time limit"), ("ESC", "Organiser: leave"), ("F", "Fullscreen"), ("C", "Camera")], y=30)
     mx = state.event_max_attempts
     ui.text(frame, f"{len(ranking)} PLAYERS   -   {len(board.rows)} GAMES   -   {mx} ATTEMPT{'S' if mx != 1 else ''} EACH",
             CX, 706, 13, ui.TEXT_3, "center", "bold", spacing=2)

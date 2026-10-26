@@ -9,8 +9,7 @@ from game.config import (
     PADDLE_LERP_FACTOR, DIFFICULTY_SPEEDS, DIFFICULTY_AI_SPEEDS, DIFFICULTY_AI_ERROR,
     RAMP_AI_SPEED, RAMP_AI_ERROR, RAMP_BALL_SPEED, SPEED_INCREMENT, MAX_BALL_SPEED,
     SERVE_SPEED_FACTOR, SERVE_MAX_SLOPE, PHYSICS_MAX_STEP, KEYBOARD_PADDLE_STEP,
-    POWERUP_RADIUS, SPEED_BOOST_MULTIPLIER, SLOW_MOTION_MULTIPLIER, TIME_ATTACK_DURATION,
-    get_theme,
+    POWERUP_RADIUS, SPEED_BOOST_MULTIPLIER, SLOW_MOTION_MULTIPLIER, get_theme,
 )
 from game.state import Ball
 from game import difficulty, effects, keys, powerups
@@ -456,7 +455,7 @@ def check_time_attack(state):
         return
     if state.game_state != "PLAYING":
         return
-    if state.game_time >= TIME_ATTACK_DURATION:
+    if state.game_time >= state.settings["time_limit"]:
         if state.score[0] > state.score[1]:
             state.winner = "Left Player"
         elif state.score[1] > state.score[0]:

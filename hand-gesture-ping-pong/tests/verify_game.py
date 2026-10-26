@@ -1558,7 +1558,7 @@ _r.score = [0, 0]; _r.game_time = 0.0; _p0 = difficulty.ramp_progress(_r)
 _r.game_time = _cfg12.DIFFICULTY_RAMP_SECONDS / 2; _p1 = difficulty.ramp_progress(_r)
 _r.game_time = 9999; _p2 = difficulty.ramp_progress(_r)
 check("vs CPU ramp goes 0 -> 0.5 -> capped at 1", _p0 == 0 and abs(_p1 - 0.5) < 1e-6 and _p2 == 1)
-_r.settings["game_mode"] = 2; _r.game_time = _cfg12.TIME_ATTACK_RAMP_SECONDS / 2
+_r.settings["game_mode"] = 2; _r.game_time = _cfg12.TIME_ATTACK_DURATION * _cfg12.TIME_ATTACK_RAMP_FRACTION / 2
 check("Time Attack ramps over its own 40 s", abs(difficulty.ramp_progress(_r) - 0.5) < 1e-6)
 _r.settings["ai_enabled"] = False; _r.game_time = 100
 check("two-player games ramp too (ball speed)", difficulty.ramp_progress(_r) > 0)
@@ -2180,6 +2180,79 @@ _dl, _dr = _dshot(0), _dshot(1)
 check("the selected side is drawn highlighted",
       _reg(_dl, _r0) > _reg(_dl, _r1) * 1.5 and _reg(_dr, _r1) > _reg(_dr, _r0) * 1.5)
 (_hist.EVENT_FILE, _hist.HISTORY_FILE, _hist.POINTS_FILE, st_mod.SETTINGS_FILE) = _o81; st_mod._event_overrides.clear()
+gfx.set_k(80)
+
+
+# ================== CUSTOM TIME LIMIT (Time Attack and the tournament qualifier) ============
+from game import settings_screen as _ss83, hud
+check("time_limit defaults to 60 seconds", st_mod.DEFAULT_SETTINGS["time_limit"] == 60)
+check("time_limit is validated to 15-300 seconds",
+      st_mod._validated_settings({"time_limit": 5})["time_limit"] == 15
+      and st_mod._validated_settings({"time_limit": 9999})["time_limit"] == 300
+      and st_mod._validated_settings({"time_limit": 90})["time_limit"] == 90)
+_t83 = GameState(); _t83.settings.update(game_mode=2, ai_enabled=True, time_limit=60); _t83.game_state = "PLAYING"
+_t83.current_time = 10.0; _t83.match_names = _t83.player_names()
+_t83.game_time = 59.0; engine.check_time_attack(_t83)
+check("a 60 s game is still running at 59 s", _t83.game_state == "PLAYING")
+_t83.settings["time_limit"] = 90; _t83.game_time = 70.0; engine.check_time_attack(_t83)
+check("with a 90 s limit it is still running at 70 s", _t83.game_state == "PLAYING")
+_t83.game_time = 90.0; engine.check_time_attack(_t83)
+check("...and ends at 90 s", _t83.game_state == "GAMEOVER")
+_t83.settings["time_limit"] = 30; _t83.game_state = "PLAYING"; _t83.game_time = 31.0; engine.check_time_attack(_t83)
+check("a 30 s limit ends a game at 31 s", _t83.game_state == "GAMEOVER")
+
+# the difficulty ramp scales with the limit
+_r83 = GameState(); _r83.settings.update(game_mode=2, ai_enabled=True, time_limit=120); _r83.game_time = 80.0
+check("the ramp reaches the top at two thirds of the limit (120 s -> 80 s)", abs(difficulty.ramp_progress(_r83) - 1.0) < 1e-6)
+_r83.settings["time_limit"] = 30; _r83.game_time = 10.0
+check("...and for a 30 s game at 20 s: half-way at 10 s", abs(difficulty.ramp_progress(_r83) - 0.5) < 1e-6)
+
+# HUD clock follows the limit
+gfx.set_k(80); _w, _h = gfx.frame_size()
+def _clock83(limit):
+    st = GameState(); st.settings.update(game_mode=2, ai_enabled=True, time_limit=limit); st.match_names = ("A", "CPU"); st.game_time = 0
+    fr = np.zeros((_h, _w, 3), np.uint8); hud.draw_hud(fr, st, get_theme(st.settings)); return fr
+check("the HUD clock shows the chosen limit", not np.array_equal(_clock83(60), _clock83(180)))
+
+# settings screen: the first Gameplay row is the time limit in Time Attack, the score target otherwise
+_ts = GameState(); _ts.settings.update(game_mode=2, time_limit=60, score_to_win=5); _ts.settings_return_state = "START"
+_row = next(i for i in _ss83._settings_items(_ts, 0) if i["id"] == 0)
+check("Settings > Gameplay shows TIME LIMIT in Time Attack", _row["label"] == "TIME LIMIT" and _row["value"] == 60 and _row["step"] == 15)
+_ss83.change_setting(_ts, 0, 1, None)
+check("D raises it by 15 s", _ts.settings["time_limit"] == 75 and _ts.settings["score_to_win"] == 5)
+_ss83.change_setting(_ts, 0, -10, None)
+check("it stops at 15 s", _ts.settings["time_limit"] == 15)
+_ss83.change_setting(_ts, 0, 100, None)
+check("...and at 300 s", _ts.settings["time_limit"] == 300)
+_ts.settings["game_mode"] = 0
+_row = next(i for i in _ss83._settings_items(_ts, 0) if i["id"] == 0)
+check("in Classic the same row is SCORE TO WIN again", _row["label"] == "SCORE TO WIN")
+_ss83.change_setting(_ts, 0, 1, None)
+check("...and moves the score target, not the time", _ts.settings["score_to_win"] == 6 and _ts.settings["time_limit"] == 300)
+
+# organiser keys on the tournament leaderboard (saved like any setting)
+_d83 = tempfile.mkdtemp(); _o83 = (_hist.EVENT_FILE, st_mod.SETTINGS_FILE)
+_hist.EVENT_FILE = os.path.join(_d83, "e.csv"); st_mod.SETTINGS_FILE = os.path.join(_d83, "s.json"); st_mod._event_overrides.clear()
+_ev83 = GameState(); _ev83.current_time = 120.0; _modes17.enter_qualifier(_ev83)
+check("the qualifier uses the saved time limit", _ev83.settings["time_limit"] == 60)
+def _eh83(**kw):
+    c = uctx(_ev83, t=_ev83.current_time + 0.04, **kw); c.hand_pos = {"Left": None, "Right": None}
+    event_handlers.handle_event_home(c, _ev83, stats, snd)
+_eh83(key=ord("+")); _eh83(key=ord("="))
+check("leaderboard: + (and =) lengthen the game by 15 s each", _ev83.settings["time_limit"] == 90)
+_eh83(key=ord("-"))
+check("leaderboard: - shortens it", _ev83.settings["time_limit"] == 75)
+check("the choice is saved", json.load(open(st_mod.SETTINGS_FILE))["time_limit"] == 75)
+for _ in range(30): _eh83(key=ord("-"))
+check("it stops at 15 s", _ev83.settings["time_limit"] == 15)
+for _ in range(30): _eh83(key=ord("+"))
+check("...and at 300 s", _ev83.settings["time_limit"] == 300)
+_ev83.settings["time_limit"] = 45
+_fr83 = np.zeros((_h, _w, 3), np.uint8); event_screens.show_event_home(_fr83, _ev83)
+_ev83.settings["time_limit"] = 120
+_fr84 = np.zeros((_h, _w, 3), np.uint8); event_screens.show_event_home(_fr84, _ev83)
+check("the leaderboard subtitle shows the length", not np.array_equal(_fr83, _fr84))
+(_hist.EVENT_FILE, st_mod.SETTINGS_FILE) = _o83; st_mod._event_overrides.clear()
 gfx.set_k(80)
 
 print(f"\n{check.total - len(check.failures)}/{check.total} checks passed")

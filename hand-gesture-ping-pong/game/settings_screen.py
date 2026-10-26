@@ -7,7 +7,7 @@ and the in-game menu both go through it.  Display / camera rows act through stat
 from game import ui, widgets
 from game.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, DIFFICULTY_NAMES, GAME_MODE_NAMES, THEME_NAMES, COLOR_THEMES,
-    get_theme,
+    get_theme, TIME_LIMIT_MIN, TIME_LIMIT_MAX, TIME_LIMIT_STEP,
 )
 from game.stats import save_settings
 from game.system import CAMERA_QUALITIES
@@ -60,7 +60,10 @@ def change_setting(state, idx, direction, sound_mgr):
         return
     s = state.settings
     if idx == 0:
-        s["score_to_win"] = max(1, min(20, s["score_to_win"] + direction))
+        if s["game_mode"] == 2:                  # Time Attack: the row is the time limit
+            s["time_limit"] = max(TIME_LIMIT_MIN, min(TIME_LIMIT_MAX, s["time_limit"] + direction * TIME_LIMIT_STEP))
+        else:
+            s["score_to_win"] = max(1, min(20, s["score_to_win"] + direction))
     elif idx == 1:
         s["difficulty"] = max(0, min(2, s["difficulty"] + direction))
     elif idx == 2:
@@ -156,7 +159,10 @@ def _settings_items(state, tab):
             mk(2, label="GAME MODE", kind="select", value=GAME_MODE_NAMES[s["game_mode"]].upper()),
             mk(1, label="DIFFICULTY", kind="segment", options=[n.upper() for n in DIFFICULTY_NAMES],
                index=s["difficulty"]),
-            mk(0, label="SCORE TO WIN", kind="slider", value=s["score_to_win"], lo=1, hi=20, step=1),
+            (mk(0, label="TIME LIMIT", kind="slider", value=s["time_limit"], lo=TIME_LIMIT_MIN, hi=TIME_LIMIT_MAX,
+                step=TIME_LIMIT_STEP, fmt="{}s", desc="How long a Time Attack game (and a tournament qualifier game) lasts.")
+             if s["game_mode"] == 2 else
+             mk(0, label="SCORE TO WIN", kind="slider", value=s["score_to_win"], lo=1, hi=20, step=1)),
             mk(3, label="OPPONENT", kind="segment", options=PLAYER_MODE_LABELS, index=state.player_mode()),
             mk(9, label="OBSTACLES", kind="toggle", value=s["obstacles_enabled"]),
             mk(10, label="POWER-UPS", kind="toggle", value=s["powerups_enabled"]),
@@ -274,7 +280,10 @@ def settings_screen(ctx, state, sound_mgr):
                 cur = next((i for i, (v, _) in enumerate(CAMERA_QUALITIES) if v == state.system.quality()), 0)
                 change_setting(state, 15, ev[2] - cur, sound_mgr)
             elif idx == 0:
-                change_setting(state, 0, ev[2] - s["score_to_win"], sound_mgr)
+                if s["game_mode"] == 2:
+                    change_setting(state, 0, (ev[2] - s["time_limit"]) // TIME_LIMIT_STEP, sound_mgr)
+                else:
+                    change_setting(state, 0, ev[2] - s["score_to_win"], sound_mgr)
             elif idx in (6, 7):
                 cur = s["music_volume"] if idx == 6 else s["sfx_volume"]
                 change_setting(state, idx, (ev[2] - cur) // 10, sound_mgr)

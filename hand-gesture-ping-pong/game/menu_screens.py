@@ -10,7 +10,7 @@ import math
 
 from game import ui, widgets
 from game.config import (
-    WINDOW_WIDTH, WINDOW_HEIGHT, GAME_MODE_NAMES, TIME_ATTACK_DURATION, COUNTDOWN_DURATION,
+    WINDOW_WIDTH, WINDOW_HEIGHT, GAME_MODE_NAMES, COUNTDOWN_DURATION,
     GESTURE_REQUIRED_DURATION, get_theme,
 )
 from game.renderer import draw_overlay
@@ -33,7 +33,7 @@ _MODE_INFO = [
     ("Survival", "How long can you keep the ball alive?",
      ["No score - only rally length counts", "The ball speeds up with every hit",
       "Miss once and the run is over"]),
-    ("Time Attack", f"Score as many points as you can in {TIME_ATTACK_DURATION} seconds.",
+    ("Time Attack", "Score as many points as you can in {secs} seconds.",
      ["The clock only runs during rallies", "Every point resets the serve",
       "Most points when time is up wins"]),
 ]
@@ -78,7 +78,7 @@ def _mode_card(frame, state, stats, theme):
 
     ui.text(frame, "SELECTED MODE", x + 32, y + 40, 13, ui.TEXT_3, "left", "bold", spacing=2.2)
     ui.text(frame, title.upper(), x + 32, y + 92, 48, accent, "left", "bold", spacing=1.2, shadow=True)
-    ui.text(frame, desc, x + 32, y + 138, 19, ui.TEXT_2, "left", "medium")
+    ui.text(frame, desc.format(secs=s["time_limit"]), x + 32, y + 138, 19, ui.TEXT_2, "left", "medium")
     for i, rule in enumerate(rules):
         ry = y + 188 + i * 32
         ui.disc(frame, x + 40, ry, 4, accent)
@@ -267,7 +267,7 @@ def _mode_line(state):
         return f"FIRST TO {s['score_to_win']} POINTS"
     if s["game_mode"] == 1:
         return "SURVIVE AS LONG AS YOU CAN"
-    return f"{TIME_ATTACK_DURATION} SECONDS  -  MOST POINTS WINS"
+    return f"{state.settings['time_limit']} SECONDS  -  MOST POINTS WINS"
 
 
 def _point_banner(frame, state):
@@ -344,7 +344,7 @@ def draw_help_overlay(frame, state):
     ui.text(frame, "THIS MODE", px + 36, ty + 66, 13, ui.TEXT_3, "left", "bold", spacing=2.4)
     ui.text(frame, "NO CAMERA OR TROUBLE", px + 36, ty + 132, 13, ui.TEXT_3, "left", "bold", spacing=2.4)
     if state.event_mode:
-        rule = ("Beat the CPU for 60 seconds. Every point counts; your best attempt goes on the leaderboard."
+        rule = (f"Beat the CPU for {state.settings['time_limit']} seconds. Every point counts; your best attempt goes on the leaderboard."
                 if state.finals is None else "Head to head, first to the target score. Tell the organiser if you need to withdraw.")
     else:
         rule = _mode_line(state).capitalize() + "."
