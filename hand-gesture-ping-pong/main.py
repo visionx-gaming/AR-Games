@@ -327,6 +327,7 @@ try:
         # Fade a screen in when the state changes (menu <-> game, etc.)
         if state.game_state != shown_state:
             shown_state, state_entered = state.game_state, current_time
+            state.screen_entered_at = current_time
         ui.fade_in(frame, current_time - state_entered)
 
         renderer.apply_post_processing(frame, post_overlay)

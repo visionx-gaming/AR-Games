@@ -61,6 +61,7 @@ def handle_event_name(ctx: FrameCtx, state, sound_mgr, tracker) -> None:
         if name and board.attempts(name) < state.event_max_attempts:
             name = board.display_name(name)
             state.event_player = name
+            state.event_last_player = ""
             set_event_overrides(state.settings, {"player1_name": name})   # shown in the HUD; never saved
             tracker.reset_calibration()               # fresh hand calibration per player
             do_start_game(ctx, state, sound_mgr)
@@ -191,6 +192,7 @@ def _handle_event_gameover(ctx: FrameCtx, state, stats, sound_mgr) -> None:
         state.event_result = state.event_board.add(
             state.event_player, state.score[0], state.score[1],
             state.max_rally, state.max_combo)
+        state.event_last_player = state.event_player
         state.event_result_until = ctx.current_time + EVENT_RESULT_SECONDS
         state.stats_saved = True
         sound_mgr.stop_bgm()

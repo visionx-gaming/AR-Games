@@ -16,6 +16,7 @@ screen only declares its items and reacts to the events that come back.
 """
 
 import math
+import random
 from collections import OrderedDict
 
 import cv2 as _cv
@@ -480,3 +481,35 @@ def draw_cursor(frame, pos, now, accent, click=None):
     _cv.polylines(frame, [pts], True, halo, max(2, round((4.4 + 0.9 * breathe) * S)), _cv.LINE_AA, 4)
     _cv.polylines(frame, [pts], True, (26, 20, 18), max(1, round(2.6 * S)), _cv.LINE_AA, 4)
     _cv.fillPoly(frame, [pts], (252, 252, 252), _cv.LINE_AA, 4)
+
+
+# ---- confetti (celebration) -------------------------------------------------------------------
+
+_CONFETTI = []
+
+
+def confetti(frame, age, colors, avoid=None, duration=5.0, count=90):
+    """Paper rain for `duration` seconds after `age` = 0.  Deterministic (no per-frame randomness), so it
+    costs one pass over the pieces.  `avoid` = (x, y, w, h) keeps the pieces off a panel."""
+    if not _CONFETTI:
+        rng = random.Random(11)
+        for _ in range(count):
+            _CONFETTI.append((rng.uniform(0, WINDOW_WIDTH), rng.uniform(120, 300), rng.uniform(0, 1.6),
+                              rng.uniform(8, 22), rng.uniform(2, 6), rng.uniform(0, 6.28), rng.uniform(3, 8),
+                              rng.randrange(8), rng.uniform(5, 10)))
+    if age <= 0 or age > duration:
+        return
+    fade = min(1.0, (duration - age) / 1.0)
+    for x0, speed, delay, sway, freq, ph, flutter, ci, size in _CONFETTI:
+        t = age - delay
+        if t < 0:
+            continue
+        y = -20 + speed * t
+        if y > WINDOW_HEIGHT + 20:
+            continue
+        x = x0 + sway * math.sin(ph + t * freq)
+        if avoid and avoid[0] < x < avoid[0] + avoid[2] and avoid[1] < y < avoid[1] + avoid[3]:
+            continue
+        h = max(2.0, size * 0.6 * abs(math.cos(ph + t * flutter)))
+        gfx.rectangle(frame, (int(x), int(y)), (int(x + size), int(y + h)),
+                      scale_color(colors[ci % len(colors)], fade), -1)

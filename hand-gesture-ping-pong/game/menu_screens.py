@@ -271,6 +271,20 @@ def _mode_line(state):
     return f"{TIME_ATTACK_DURATION} SECONDS  -  MOST POINTS WINS"
 
 
+def _hand_chip(frame, state, hand, cx, y):
+    """Under a player's name plate: is their hand being tracked yet?"""
+    if not state.camera_ok:
+        label, col = "KEYBOARD  W / S", ui.TEXT_2
+    elif state.hand_pos[hand] is not None:
+        label, col = "HAND READY", ui.SUCCESS
+    elif int(state.current_time * 2.5) % 2:
+        label, col = "SHOW YOUR HAND", ui.TEXT_3
+    else:
+        label, col = "SHOW YOUR HAND", ui.WARN
+    w = ui.text_width(label, 14, "bold", 0.8) + 34
+    ui.chip(frame, cx - w / 2, y, label, col, h=28, size=14, pad=17)
+
+
 def show_countdown_screen(frame, state):
     theme = get_theme(state.settings)
     draw_overlay(frame, 0.40)
@@ -281,6 +295,10 @@ def show_countdown_screen(frame, state):
     _name_plate(frame, WINDOW_WIDTH - 332, CY - 70, 280, 140,
                 "COMPUTER" if cpu == "right" else ("PLAYER 1" if cpu == "left" else "PLAYER 2"),
                 right_name, "AUTO" if cpu == "right" else "RIGHT HAND", theme["right_paddle"], "right")
+
+    for side, name, plate_cx in (("Left", "left", 192), ("Right", "right", WINDOW_WIDTH - 192)):
+        if cpu != name:
+            _hand_chip(frame, state, side, plate_cx, CY + 84)
 
     remaining = COUNTDOWN_DURATION - (state.current_time - state.countdown_start)
     ui.text(frame, "GET READY", CX, CY - 168, 24, ui.TEXT_2, "center", "bold", spacing=6)
@@ -319,17 +337,20 @@ def show_game_over_screen(frame, state, stats):
         label, headline, hcol = "MATCH COMPLETE", f"{_fit_name(n1, 56, 640)} WINS", (ui.SUCCESS if state.cpu_side() != "left" else DANGER_SOFT)
     else:
         label, headline, hcol = "MATCH COMPLETE", f"{_fit_name(n2, 56, 640)} WINS", (80, 180, 255) if state.cpu_side() != "right" else DANGER_SOFT
+    age = max(0.0, state.current_time - state.gameover_time)
     ui.text(frame, label, CX, 120, 14, ui.TEXT_3, "center", "bold", spacing=4)
-    ui.text(frame, headline.upper(), CX, 176, 56, hcol, "center", "bold", spacing=1.5, shadow=True)
+    pop = 1.0 + 0.30 * max(0.0, 1.0 - age / 0.45) ** 2                  # the headline lands with a bounce
+    ui.text(frame, headline.upper(), CX, 176, round(56 * pop), hcol, "center", "bold", spacing=1.5, shadow=True)
 
     if mode == 1:
         ui.text(frame, str(state.survival_rally), CX, 280, 64, accent, "center", "pixel", shadow=True)
     else:
         ls, rs = state.score
         lw, rw = ls > rs, rs > ls
-        ui.text(frame, str(ls), CX - 130, 280, 60, accent if lw else ui.TEXT_2, "center", "pixel", shadow=lw)
+        count = min(1.0, age / 0.8)                                       # scores count up from 0
+        ui.text(frame, str(round(ls * count)), CX - 130, 280, 60, accent if lw else ui.TEXT_2, "center", "pixel", shadow=lw)
         ui.text(frame, "-", CX, 280, 40, ui.TEXT_3, "center", "pixel")
-        ui.text(frame, str(rs), CX + 130, 280, 60, accent if rw else ui.TEXT_2, "center", "pixel", shadow=rw)
+        ui.text(frame, str(round(rs * count)), CX + 130, 280, 60, accent if rw else ui.TEXT_2, "center", "pixel", shadow=rw)
         ui.text(frame, _fit_name(n1, 22, 220), CX - 130, 334, 22, theme["left_paddle"], "center", "bold")
         ui.text(frame, _fit_name(n2, 22, 220), CX + 130, 334, 22, theme["right_paddle"], "center", "bold")
 
@@ -339,6 +360,10 @@ def show_game_over_screen(frame, state, stats):
              ("BEST RALLY", str(state.max_rally)))
     for i, (lab, val) in enumerate(tiles):
         ui.stat_tile(frame, x0 + i * (tw + gap), 384, tw, 92, lab, val, accent)
+
+    if state.new_best:
+        pulse = 0.5 + 0.5 * math.sin(state.current_time * 5)
+        ui.chip(frame, x0 + 8, 366, "NEW BEST", ui.mix(ui.GOLD, (255, 255, 255), 0.4 * pulse), h=24, size=13)
 
     r = gameover_rects()
     mx, my = state.mouse_pos
@@ -352,6 +377,13 @@ def show_game_over_screen(frame, state, stats):
         x, y, w, h = r["rematch"]
         ui.progress_bar(frame, x + 22, y + h - 14, w - 44, 5, frac, (255, 255, 255), ui.mix(accent, (0, 0, 0), 0.55))
     ui.hints(frame, [("SPACE", "Play again"), ("ESC", "Main menu"), ("HANDS", "Raise both to rematch")])
+
+    # celebrate a win by a person (not a CPU win, not a draw); a Survival run only for a new best
+    won_side = "left" if "Left" in state.winner else ("right" if "Right" in state.winner else None)
+    celebrate = state.new_best if mode == 1 else (won_side is not None and state.cpu_side() != won_side)
+    if celebrate:
+        wcol = theme["left_paddle"] if won_side == "left" else theme["right_paddle"]
+        ui.confetti(frame, age - 0.15, [wcol, accent, ui.GOLD, (255, 255, 255)], avoid=(CX - 380, 78, 760, 520))
 
 
 DANGER_SOFT = (96, 96, 240)

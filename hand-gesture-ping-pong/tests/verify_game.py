@@ -1885,6 +1885,83 @@ _modes17.leave_tournament(_n)
 check("...and leaving the tournament restores the player's own name", _n.settings["player1_name"] == "TEJAS")
 _hist.EVENT_FILE, st_mod.SETTINGS_FILE = _o18; st_mod._event_overrides.clear()
 
+
+# ================== UX POLISH: status lines, hand chips, confetti, leaderboard highlight ===
+from game import hud as _hud_ux, event_screens as _es_ux
+_u = GameState(); _u.settings.update(ai_enabled=False, game_mode=0, score_to_win=5); _u.match_names = ("ANA", "BOB")
+_u.game_state = "PLAYING"; _u.current_time = 10.0
+check("HUD: no match-point line early in a game", all("MATCH POINT" not in t for t, _ in _hud_ux._status_lines(_u, get_theme(_u.settings))))
+_u.score = [4, 2]
+check("HUD: MATCH POINT names the player who is one point away",
+      any(t.startswith("MATCH POINT") and "ANA" in t for t, _ in _hud_ux._status_lines(_u, get_theme(_u.settings))))
+_u.score = [4, 4]
+check("HUD: both one away -> SUDDEN DEATH", any(t == "SUDDEN DEATH" for t, _ in _hud_ux._status_lines(_u, get_theme(_u.settings))))
+_u.score = [0, 0]; _u.survival_rally = 3
+check("HUD: no rally line below 4 hits", all(not t.startswith("RALLY") for t, _ in _hud_ux._status_lines(_u, get_theme(_u.settings))))
+_u.survival_rally = 12
+check("HUD: rally counter from 4 hits", any(t == "RALLY 12" for t, _ in _hud_ux._status_lines(_u, get_theme(_u.settings))))
+_u.settings["game_mode"] = 1
+check("HUD: Survival keeps its own rally pill (no duplicate line)", all(not t.startswith("RALLY") for t, _ in _hud_ux._status_lines(_u, get_theme(_u.settings))))
+
+# hand-ready chips on the countdown screen
+gfx.set_k(80); _w, _h = gfx.frame_size()
+def _cd(hand_left, camera_ok=True):
+    st = GameState(); st.settings.update(ai_enabled=False); st.match_names = ("A", "B"); st.current_time = 10.4     # the prompt blinks: this instant is the amber half
+    st.countdown_start = 9.0; st.camera_ok = camera_ok
+    st.hand_pos = {"Left": (100, 300) if hand_left else None, "Right": None}
+    fr = np.zeros((_h, _w, 3), np.uint8); menu_screens.show_countdown_screen(fr, st)
+    k = gfx.SCALE; reg = fr[int(440 * k):int(476 * k), int(100 * k):int(290 * k)]
+    return reg
+_ok, _no = _cd(True), _cd(False)
+check("countdown: a tracked hand shows a green READY chip, a missing one an amber prompt",
+      _ok[:, :, 1].max() > 150 and _ok[:, :, 2].max() < _ok[:, :, 1].max() and _no[:, :, 2].max() > 150)
+
+# confetti
+_cf = np.zeros((_h, _w, 3), np.uint8); ui.confetti(_cf, 2.0, [(0, 200, 255), (255, 255, 255)])
+check("confetti draws pieces while it runs", _cf.any())
+_cf2 = np.zeros((_h, _w, 3), np.uint8); ui.confetti(_cf2, 9.0, [(0, 200, 255)])
+check("...and nothing after its 5 seconds", not _cf2.any())
+_cf3 = np.zeros((_h, _w, 3), np.uint8); ui.confetti(_cf3, 2.0, [(0, 200, 255)], avoid=(0, 0, 1280, 720))
+check("...and keeps off an avoided area", not _cf3.any())
+
+# game-over: celebration only for a person's win; NEW BEST chip
+def _go(winner, ai, new_best, mode=0, side=0):
+    st = GameState(); st.settings.update(ai_enabled=ai, game_mode=mode, player_side=side); st.match_names = st.player_names()
+    st.winner = winner; st.score = [5, 3] if winner.startswith("Left") else [3, 5]; st.gameover_time = 10.0; st.current_time = 11.5
+    st.new_best = new_best; st.high_score = 5; st.max_combo = 4; st.max_rally = 6
+    fr = np.zeros((_h, _w, 3), np.uint8); menu_screens.show_game_over_screen(fr, st, {})
+    k = gfx.SCALE; return fr[:, :int(250 * k)].astype(int).sum()          # the strip left of the panel: confetti only
+check("game over: the player winning against the CPU gets confetti", _go("Left Player", True, False) > 0)
+check("game over: a CPU win gets none", _go("Right Player", True, False) == 0)
+check("game over: a two-player win gets confetti", _go("Right Player", False, False) > 0)
+check("game over: CPU on the left winning gets none", _go("Left Player", True, False, side=1) == 0)
+check("game over: a Survival run only for a new best", _go("Rally: 5", False, False, mode=1) == 0 and _go("Rally: 5", False, True, mode=1) > 0)
+_ng = {"high_score_classic": 2}; _gs = GameState(); _gs.settings["game_mode"] = 0; _gs.score = [5, 1]; _gs.winner = "Left Player"
+check("record_game_result reports a new best once, then not for an equal result",
+      st_mod.record_game_result(_ng, _gs) is True and st_mod.record_game_result(_ng, _gs) is False)
+
+# leaderboard: just-played highlight + staggered entrance
+_lb = GameState(); _lb.settings["ai_enabled"] = True
+import tempfile as _tf
+_evb = EventBoard(os.path.join(_tf.mkdtemp(), "e.csv")) if "EventBoard" in globals() else None
+if _evb is None:
+    from game.event import EventBoard as _EB
+    _evb = _EB(os.path.join(_tf.mkdtemp(), "e.csv"))
+for _n, _a, _b in (("Ana", 5, 2), ("Bo", 4, 3), ("Cy", 3, 3)):
+    _evb.add(_n, _a, _b, 4, 3)
+_lb.event_board = _evb; _lb.event_max_attempts = 1; _lb.current_time = 50.0
+def _lbshot(last, entered):
+    _lb.event_last_player = last; _lb.screen_entered_at = entered
+    fr = np.zeros((_h, _w, 3), np.uint8); _es_ux.show_event_home(fr, _lb); return fr
+k = gfx.SCALE
+_hl = _lbshot("Bo", 40.0)[int(285 * k):int(320 * k), int(600 * k):int(1000 * k)].astype(int).sum()
+_pl = _lbshot("", 40.0)[int(285 * k):int(320 * k), int(600 * k):int(1000 * k)].astype(int).sum()
+check("leaderboard: the player who just finished has a highlighted row", _hl > _pl * 1.1)
+_early = _lbshot("", 49.95)[int(210 * k):int(330 * k), int(280 * k):int(1000 * k)].astype(int).sum()
+_late = _lbshot("", 40.0)[int(210 * k):int(330 * k), int(280 * k):int(1000 * k)].astype(int).sum()
+check("leaderboard: rows slide in (fewer visible at the very start of the screen)", _early < _late)
+gfx.set_k(80)
+
 print(f"\n{check.total - len(check.failures)}/{check.total} checks passed")
 print("ALL PASSED" if not check.failed else "SOME FAILED")
 sys.exit(1 if check.failed else 0)

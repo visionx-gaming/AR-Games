@@ -57,23 +57,36 @@ def show_event_home(frame, state):
     rows = ranking[:EVENT_LEADERBOARD_ROWS]
     if not rows:
         ui.text(frame, "NO SCORES YET  -  BE THE FIRST!", CX, y + h / 2, 24, accent, "center", "bold", spacing=1.5)
+    elapsed = now - state.screen_entered_at
+    mine = (state.event_last_player or "").lower()
     for i, e in enumerate(rows):
-        ry = y + 92 + i * 37
-        if i % 2 == 0:
-            ui.fill_rrect(frame, x + 14, ry - 18, w - 28, 36, 9, ui.PANEL_HI, 0.38)
+        p = ui.ease_out(max(0.0, min(1.0, (elapsed - 0.08 - i * 0.05) / 0.32)))      # rows slide in one by one
+        if p <= 0:
+            continue
+        dx, ry = (1 - p) * 48, y + 92 + i * 37
+        just = bool(mine) and e["player"].lower() == mine
+        if just:                                                  # the player who just finished
+            pulse = 0.5 + 0.5 * math.sin(now * 4)
+            ui.fill_rrect(frame, x + 14 + dx, ry - 18, w - 28, 36, 9, accent, (0.16 + 0.14 * pulse) * p)
+            ui.rrect(frame, x + 14 + dx, ry - 18, w - 28, 36, 9, accent, 1)
+        elif i % 2 == 0:
+            ui.fill_rrect(frame, x + 14 + dx, ry - 18, w - 28, 36, 9, ui.PANEL_HI, 0.38 * p)
         top = e["rank"] <= 3
         col = MEDALS[e["rank"] - 1] if top else ui.TEXT
         if top:
-            ui.disc(frame, cols["rank"], ry, 15, col)
-            ui.text(frame, str(e["rank"]), cols["rank"], ry, 18, (24, 20, 18), "center", "bold")
+            ui.disc(frame, cols["rank"] + dx, ry, 15, col)
+            ui.text(frame, str(e["rank"]), cols["rank"] + dx, ry, 18, (24, 20, 18), "center", "bold", opacity=p)
         else:
-            ui.text(frame, f"{e['rank']}{'=' if e['tied'] else ''}", cols["rank"], ry, 19, ui.TEXT_3, "center", "bold")
+            ui.text(frame, f"{e['rank']}{'=' if e['tied'] else ''}", cols["rank"] + dx, ry, 19, ui.TEXT_3, "center", "bold", opacity=p)
         if top and e["tied"]:
-            ui.text(frame, "=", cols["rank"] + 24, ry, 18, ui.TEXT_3, "left", "bold")
-        ui.text(frame, ui.fit_text(e["player"], 22, "bold", 380), cols["player"], ry, 22, col, "left", "bold")
-        ui.text(frame, f"{e['net']:+d}", cols["score"], ry, 24, col, "center", "bold")
-        ui.text(frame, f"{e['scored']} - {e['conceded']}", cols["points"], ry, 18, ui.TEXT_2, "center", "semi")
-        ui.text(frame, str(e["attempts"]), cols["tries"], ry, 18, ui.TEXT_2, "center", "semi")
+            ui.text(frame, "=", cols["rank"] + 24 + dx, ry, 18, ui.TEXT_3, "left", "bold", opacity=p)
+        name_w = ui.text_width(ui.fit_text(e["player"], 22, "bold", 380 if not just else 270), 22, "bold")
+        ui.text(frame, ui.fit_text(e["player"], 22, "bold", 380 if not just else 270), cols["player"] + dx, ry, 22, col, "left", "bold", opacity=p)
+        if just:
+            ui.chip(frame, cols["player"] + name_w + 14 + dx, ry - 12, "JUST PLAYED", accent, h=24, size=12)
+        ui.text(frame, f"{e['net']:+d}", cols["score"] + dx, ry, 24, col, "center", "bold", opacity=p)
+        ui.text(frame, f"{e['scored']} - {e['conceded']}", cols["points"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
+        ui.text(frame, str(e["attempts"]), cols["tries"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
 
     _cta(frame, "PRESS SPACE TO PLAY", "SPACE", 628, accent, now)
     ui.hints(frame, [("ESC", "Organiser: leave tournament"), ("F", "Fullscreen"), ("C", "Camera")], y=30)

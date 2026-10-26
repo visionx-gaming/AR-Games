@@ -1,6 +1,8 @@
 """In-game HUD: player cards with scores, a centre pill for the mode, power-up pills,
 and the 'hand lost' warning.  Built on game.ui; replaces the old pixel-text HUD."""
 
+import math
+
 from game import ui, difficulty
 from game.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TIME_ATTACK_DURATION, POWERUP_TYPES, get_powerup_color,
@@ -63,13 +65,36 @@ def _powerup_pills(frame, state, theme):
         base = key.replace("_left", "").replace("_right", "")
         info = POWERUP_TYPES.get(base, {})
         color = get_powerup_color(theme, base)
-        x, w, h = WINDOW_WIDTH - 24 - 176, 176, 38
+        x, w, h = WINDOW_WIDTH - 24 - 212, 212, 38
         ui.panel(frame, x, y, w, h, 11, alpha=0.62)
         ui.disc(frame, x + 20, y + h / 2 - 2, 6, color)
-        ui.text(frame, info.get("desc", base).upper(), x + 36, y + h / 2 - 2, 14, ui.TEXT, "left", "bold", spacing=0.6)
+        ui.text(frame, ui.fit_text(info.get("desc", base).upper(), 14, "bold", w - 96), x + 36, y + h / 2 - 2, 14, ui.TEXT, "left", "bold", spacing=0.6)
         ui.text(frame, f"{rem:.0f}s", x + w - 14, y + h / 2 - 2, 14, ui.TEXT_2, "right", "bold")
         ui.progress_bar(frame, x + 14, y + h - 8, w - 28, 3, rem / info.get("duration", 5.0), color)
         y += h + 8
+
+
+def _status_lines(state, theme):
+    """Small lines under the centre pill: difficulty, match point, rally."""
+    lines = []
+    lvl = difficulty.cpu_level(state)
+    if lvl:                                                    # vs CPU: level 1-5
+        lines.append((f"CPU LEVEL {lvl}", ui.DANGER if lvl >= 4 else ui.TEXT_2))
+    else:                                                      # two players: the ball speed multiplier
+        mult = difficulty.speed_multiplier(state)
+        lines.append((f"SPEED x{mult:.1f}", ui.DANGER if mult >= 1.35 else ui.TEXT_2))
+    s = state.settings
+    if s["game_mode"] == 0 and s["score_to_win"] > 1:
+        one_away = [i for i in (0, 1) if state.score[i] == s["score_to_win"] - 1]
+        if one_away:
+            glow = 0.5 + 0.5 * math.sin(state.current_time * 6)
+            who = "MATCH POINT" if len(one_away) == 1 else "SUDDEN DEATH"
+            if len(one_away) == 1:
+                who += "  -  " + ui.fit_text(state.match_names[one_away[0]], 13, "bold", 150).upper()
+            lines.append((who, ui.mix(ui.GOLD, (255, 255, 255), 0.45 * glow)))
+    if s["game_mode"] != 1 and state.game_state == "PLAYING" and state.survival_rally >= 4:
+        lines.append((f"RALLY {state.survival_rally}", ui.GOLD if state.survival_rally >= 10 else ui.TEXT))
+    return lines
 
 
 def draw_hud(frame, state, theme):
@@ -79,14 +104,8 @@ def draw_hud(frame, state, theme):
     _player_card(frame, state, 0, n1, state.score[0], theme["left_paddle"], show_score)
     _player_card(frame, state, 1, n2, state.score[1], theme["right_paddle"], show_score)
     _center_pill(frame, state, theme)
-    lvl = difficulty.cpu_level(state)
-    if lvl:                                                    # vs CPU: level 1-5
-        ui.text(frame, f"CPU LEVEL {lvl}", WINDOW_WIDTH // 2, _CARD_Y + _CARD_H + 16, 13,
-                ui.DANGER if lvl >= 4 else ui.TEXT_2, "center", "bold", spacing=1.8)
-    else:                                                      # two players: the ball speed multiplier
-        mult = difficulty.speed_multiplier(state)
-        ui.text(frame, f"SPEED x{mult:.1f}", WINDOW_WIDTH // 2, _CARD_Y + _CARD_H + 16, 13,
-                ui.DANGER if mult >= 1.35 else ui.TEXT_2, "center", "bold", spacing=1.8)
+    for i, (label, col) in enumerate(_status_lines(state, theme)):
+        ui.text(frame, label, WINDOW_WIDTH // 2, _CARD_Y + _CARD_H + 16 + i * 22, 13, col, "center", "bold", spacing=1.8)
     _powerup_pills(frame, state, theme)
 
 

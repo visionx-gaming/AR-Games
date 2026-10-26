@@ -184,7 +184,8 @@ def record_game_result(stats, state):
         current_high = state.survival_rally
     else:                            # Time Attack: best score
         current_high = max(state.score)
-    if current_high > stats.get(hs_key, 0):
+    new_best = current_high > stats.get(hs_key, 0)
+    if new_best:
         stats[hs_key] = current_high
 
     stats["total_games"] = stats.get("total_games", 0) + 1
@@ -200,6 +201,7 @@ def record_game_result(stats, state):
         stats["total_wins_right"] = stats.get("total_wins_right", 0) + 1
 
     save_stats(stats)
+    return new_best
 
 
 # ===================================================================

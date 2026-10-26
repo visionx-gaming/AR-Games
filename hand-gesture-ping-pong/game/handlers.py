@@ -410,7 +410,7 @@ def handle_gameover(ctx: FrameCtx, state, stats, sound_mgr) -> None:
         return
 
     if not state.stats_saved:
-        record_game_result(stats, state)
+        state.new_best = record_game_result(stats, state)
         history.record_game(state)
         state.high_score = stats_mod.high_score_value(stats, state.settings["game_mode"])
         state.stats_saved = True
