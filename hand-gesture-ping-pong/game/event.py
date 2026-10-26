@@ -7,6 +7,7 @@ Excel.  The leaderboard ranks each player by their BEST attempt:
     1. higher net score (points scored minus points conceded)
     2. fewer points conceded
     3. longer best rally
+    4. more returns (balls the player hit back)
     (still equal  ->  same rank; settle it with a sudden-death game)
 """
 
@@ -44,6 +45,7 @@ class EventBoard:
                             "conceded": int(r["conceded"]),
                             "rally": int(r["best_rally"]),
                             "combo": int(r["best_combo"]),
+                            "hits": int(r.get("hits") or 0),
                         })
                     except (KeyError, ValueError, TypeError):
                         continue            # skip a damaged / hand-edited row
@@ -76,7 +78,7 @@ class EventBoard:
         best = {}
         for r in self.rows:
             k = r["key"]
-            score = (r["net"], -r["conceded"], r["rally"])
+            score = (r["net"], -r["conceded"], r["rally"], r["hits"])
             if k not in best or score > best[k]["score"]:
                 best[k] = {"score": score, "row": r}
         order = sorted(best.values(), key=lambda b: b["score"], reverse=True)
@@ -88,7 +90,7 @@ class EventBoard:
             out.append({
                 "rank": rank, "player": self._display[r["key"]], "key": r["key"],
                 "net": r["net"], "scored": r["scored"], "conceded": r["conceded"],
-                "rally": r["rally"], "attempts": self.attempts(r["key"]),
+                "rally": r["rally"], "hits": r["hits"], "attempts": self.attempts(r["key"]),
             })
         for e in out:
             e["tied"] = sum(1 for o in out if o["rank"] == e["rank"]) > 1
@@ -104,17 +106,17 @@ class EventBoard:
     def best_of(self, name):
         key = name_key(name)
         mine = [r for r in self.rows if r["key"] == key]
-        return max(mine, key=lambda r: (r["net"], -r["conceded"], r["rally"])) if mine else None
+        return max(mine, key=lambda r: (r["net"], -r["conceded"], r["rally"], r["hits"])) if mine else None
 
     # ---- recording -----------------------------------------------------------
 
-    def add(self, name, scored, conceded, best_rally, best_combo):
+    def add(self, name, scored, conceded, best_rally, best_combo, hits=0):
         """Record a finished attempt. Returns a summary for the result screen."""
         name = self.display_name(name)
         prev_best = self.best_of(name)
         row = self._ingest({"player": name, "attempt": self.attempts(name) + 1,
                             "scored": scored, "conceded": conceded,
-                            "rally": best_rally, "combo": best_combo})
+                            "rally": best_rally, "combo": best_combo, "hits": hits})
         history.record_event_attempt(row)
         new_best = self.best_of(name)
         me = next(e for e in self.ranking() if e["key"] == row["key"])

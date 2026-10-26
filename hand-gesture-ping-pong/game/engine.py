@@ -255,6 +255,8 @@ def _check_one_paddle(state, ball, side, sound_mgr, theme):
         if state.combo_count > 0 and state.combo_count % 5 == 0:
             sound_mgr.play_combo()
         state.survival_rally += 1
+        if side != state.cpu_side():
+            state.total_hits += 1                 # a person returned the ball (qualifier tie-break)
         if state.survival_rally > state.max_rally:
             state.max_rally = state.survival_rally
         if state.cpu_side() and side != state.cpu_side():

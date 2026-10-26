@@ -47,9 +47,9 @@ def show_event_home(frame, state):
     ranking = board.ranking()
     x, y, w, h = 190, 150, 900, 462
     ui.panel(frame, x, y, w, h, 20, alpha=0.78)
-    cols = {"rank": x + 54, "player": x + 104, "score": x + 560, "points": x + 688, "tries": x + 808}
+    cols = {"rank": x + 54, "player": x + 104, "score": x + 520, "points": x + 626, "rally": x + 726, "tries": x + 826}
     for label, cx_, anchor in (("RANK", cols["rank"], "center"), ("PLAYER", cols["player"], "left"),
-                               ("SCORE", cols["score"], "center"), ("POINTS", cols["points"], "center"),
+                               ("SCORE", cols["score"], "center"), ("POINTS", cols["points"], "center"), ("RALLY", cols["rally"], "center"),
                                ("TRIES", cols["tries"], "center")):
         ui.text(frame, label, cx_, y + 34, 13, ui.TEXT_3, anchor, "bold", spacing=2)
     ui.hline(frame, x + 22, x + w - 22, y + 56, ui.mix(ui.PANEL, (255, 255, 255), 0.14))
@@ -86,6 +86,7 @@ def show_event_home(frame, state):
             ui.chip(frame, cols["player"] + name_w + 14 + dx, ry - 12, "JUST PLAYED", accent, h=24, size=12)
         ui.text(frame, f"{e['net']:+d}", cols["score"] + dx, ry, 24, col, "center", "bold", opacity=p)
         ui.text(frame, f"{e['scored']} - {e['conceded']}", cols["points"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
+        ui.text(frame, str(e["rally"]), cols["rally"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
         ui.text(frame, str(e["attempts"]), cols["tries"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
 
     _cta(frame, "PRESS SPACE TO PLAY", "SPACE", 628, accent, now)
@@ -103,6 +104,11 @@ def draw_tournament_exit_dialog(frame, state):
     ui.text(frame, "Back to the main menu. Scores and the bracket stay saved.", CX, CY - 8, 18, ui.TEXT_2, "center", "medium")
     ui.text(frame, "Y  =  LEAVE          N  =  STAY", CX, CY + 48, 22, ui.WARN, "center", "bold", spacing=2)
     ui.hints(frame, [("Y", "Leave"), ("N / ESC", "Stay")], backdrop=True)
+
+
+def event_side_rects():
+    """Clickable LEFT / RIGHT buttons of the name dialog (also what the handler hit-tests)."""
+    return [(CX - 118, CY + 62, 116, 36), (CX + 2, CY + 62, 116, 36)]
 
 
 def draw_event_name_dialog(frame, state):
@@ -135,9 +141,14 @@ def draw_event_name_dialog(frame, state):
             msg, mcol = f"Welcome back  -  attempt {n + 1} of {mx}", ui.SUCCESS
         else:
             msg, mcol = f"Attempt 1 of {mx}  -  good luck!", ui.SUCCESS
-    ui.text(frame, msg, CX, CY + 36, 19, mcol, "center", "bold")
-    ui.text(frame, "Use first name + initial so it stays unique", CX, CY + 76, 15, ui.TEXT_3, "center", "medium")
-    ui.hints(frame, [("ENTER", "Start"), ("ESC", "Cancel")], backdrop=True)
+    ui.text(frame, msg, CX, CY + 32, 19, mcol, "center", "bold")
+    ui.text(frame, "YOU PLAY ON", CX - 130, CY + 80, 13, ui.TEXT_3, "right", "bold", spacing=2)
+    for i, (rx, ry, rw, rh) in enumerate(event_side_rects()):
+        on = state.event_side == i
+        ui.fill_rrect(frame, rx, ry, rw, rh, 10, accent if on else ui.PANEL_HI, 0.95 if on else 0.8)
+        ui.text(frame, "LEFT" if i == 0 else "RIGHT", rx + rw / 2, ry + rh / 2, 17, (24, 20, 18) if on else ui.TEXT_2, "center", "bold", spacing=1.5)
+    ui.text(frame, "Use first name + initial so it stays unique", CX, CY + 130, 15, ui.TEXT_3, "center", "medium")
+    ui.hints(frame, [("ENTER", "Start"), ("TAB", "Switch side"), ("ESC", "Cancel")], backdrop=True)
 
 
 def show_event_result(frame, state):
@@ -236,7 +247,7 @@ def show_finals_home(frame, state):
     for i, m in enumerate(po):
         _draw_match_box(frame, 60 + i * 360, 412, m, state, theme)
     if po:
-        ui.text(frame, "SUDDEN-DEATH PLAYOFF FOR A FINALS SEAT  -  TIED ON SCORE, POINTS AND RALLY", CX, 396, 13, ui.WARN,
+        ui.text(frame, "SUDDEN-DEATH PLAYOFF FOR A FINALS SEAT  -  TIED ON SCORE, POINTS, RALLY AND RETURNS", CX, 396, 13, ui.WARN,
                 "center", "bold", spacing=1.6)
 
     # bracket connectors: semi-finals -> final

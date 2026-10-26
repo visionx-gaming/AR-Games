@@ -7,8 +7,8 @@
 from game import modes
 from game.config import EVENT_RESULT_SECONDS, FINALS_RESULT_SECONDS
 from game import event_screens, menu_screens, renderer
-from game import history, stats as stats_mod
-from game.flow import FrameCtx, do_start_game
+from game import history, keys, stats as stats_mod
+from game.flow import FrameCtx, do_start_game, in_rect
 from game.stats import record_game_result, clean_name, NAME_CHARS, NAME_MAX_LEN, set_event_overrides
 
 
@@ -58,6 +58,7 @@ def handle_event_home(ctx: FrameCtx, state, stats, sound_mgr) -> None:
     # not be able to start a game with someone else's name (or none).
     if ctx.key in (13, 32) or ctx.mouse_clicked:
         state.name_edit_buf = ["", ""]
+        state.event_side = 0
         state.game_state = "EVENT_NAME"
 
 
@@ -70,6 +71,16 @@ def handle_event_name(ctx: FrameCtx, state, sound_mgr, tracker) -> None:
     buf = state.name_edit_buf[0]
     k = ctx.key
 
+    if ctx.mouse_clicked:
+        for i, r in enumerate(event_screens.event_side_rects()):
+            if in_rect(*ctx.mouse_pos, r) and state.event_side != i:
+                state.event_side = i
+                sound_mgr.play_menu_tick()
+    if ctx.key_raw in (keys.LEFT, keys.RIGHT) or k == 9:      # Tab / arrows: switch side
+        want = 1 if ctx.key_raw == keys.RIGHT else (0 if ctx.key_raw == keys.LEFT else 1 - state.event_side)
+        if want != state.event_side:
+            state.event_side = want
+            sound_mgr.play_menu_tick()
     if k == 27:                                       # Esc: back to the leaderboard
         state.game_state = "EVENT_HOME"
     elif k == 13:                                     # Enter: start (if allowed)
@@ -78,7 +89,8 @@ def handle_event_name(ctx: FrameCtx, state, sound_mgr, tracker) -> None:
             name = board.display_name(name)
             state.event_player = name
             state.event_last_player = ""
-            set_event_overrides(state.settings, {"player1_name": name})   # shown in the HUD; never saved
+            set_event_overrides(state.settings, {"player1_name": name,      # shown in the HUD; never saved
+                                                 "player_side": state.event_side})   # 0: CPU on the right, 1: on the left
             tracker.reset_calibration()               # fresh hand calibration per player
             do_start_game(ctx, state, sound_mgr)
         else:
@@ -207,9 +219,10 @@ def _handle_event_gameover(ctx: FrameCtx, state, stats, sound_mgr) -> None:
     if not state.stats_saved:
         record_game_result(stats, state)
         history.record_game(state)
+        me = 1 if state.cpu_side() == "left" else 0          # the person's paddle: their score first
         state.event_result = state.event_board.add(
-            state.event_player, state.score[0], state.score[1],
-            state.max_rally, state.max_combo)
+            state.event_player, state.score[me], state.score[1 - me],
+            state.max_rally, state.max_combo, state.total_hits)
         state.event_last_player = state.event_player
         state.event_result_until = ctx.current_time + EVENT_RESULT_SECONDS
         state.stats_saved = True

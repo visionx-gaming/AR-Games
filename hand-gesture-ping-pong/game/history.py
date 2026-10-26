@@ -27,7 +27,7 @@ GAME_FIELDS = [
     "score_to_win", "duration_s", "best_combo", "best_rally",
 ]
 EVENT_FIELDS = [
-    "timestamp", "player", "attempt", "scored", "conceded", "net", "best_rally", "best_combo",
+    "timestamp", "player", "attempt", "scored", "conceded", "net", "best_rally", "best_combo", "hits",
 ]
 FINALS_FIELDS = [
     "timestamp", "match", "player1", "player2", "score1", "score2", "winner", "note",
@@ -50,12 +50,31 @@ def _safe(value):
     return value
 
 
+def _migrate_header(path, fields):
+    """A file written by an older version may lack columns added since: rewrite it with the full
+    header (old rows get blanks) so new rows line up.  A file with unrelated columns is left alone."""
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        old = list(reader.fieldnames or [])
+        rows = list(reader)
+    if old == list(fields) or not old or not set(old) <= set(fields):
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=fields, restval="")
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, path)
+
+
 def _append(path, fields, rows):
     """Append rows to a CSV, writing the header (and a BOM, so Excel reads it
     as UTF-8) when the file is new.  Returns True on success."""
     global _warned
     try:
         is_new = not os.path.exists(path) or os.path.getsize(path) == 0
+        if not is_new:
+            _migrate_header(path, fields)
         with open(path, "a", newline="", encoding="utf-8-sig" if is_new else "utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fields)
             if is_new:
@@ -144,6 +163,7 @@ def record_event_attempt(row):
         "net": row["net"],
         "best_rally": row["rally"],
         "best_combo": row["combo"],
+        "hits": row.get("hits", 0),
     }
     _pending.append(("event", EVENT_FIELDS, [{k: _safe(v) for k, v in out.items()}]))
     flush()

@@ -209,6 +209,8 @@ class GameState:
         # --- Event (tournament) mode ---
         self.event_mode = False
         self.screen_entered_at = 0.0           # when the current screen appeared (for entrance animations)
+        self.event_side = 0                    # qualifier: which paddle this player takes (0 left, 1 right)
+        self.total_hits = 0                    # returns by the human side(s) this game (a tie-break)
         self.last_point = None                 # (side, time) of the latest point, for the banner between rallies
         self.show_help = False                 # the HOW TO PLAY overlay is open
         self.new_best = False                  # the game that just ended beat a high score
@@ -256,6 +258,7 @@ class GameState:
     def reset_for_new_game(self):
         """Reset state for a new game while keeping settings."""
         self.new_best = False
+        self.total_hits = 0
         self.last_point = None
         self.show_help = False
         self.score = [0, 0]

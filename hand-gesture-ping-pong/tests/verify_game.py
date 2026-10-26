@@ -2051,6 +2051,137 @@ check("the in-game menu looks different in a tournament (ABANDON GAME / GAME ON 
 (_hist.EVENT_FILE, _hist.FINALS_FILE, st_mod.SETTINGS_FILE) = _o77; st_mod._event_overrides.clear()
 gfx.set_k(80)
 
+
+# ================== QUALIFIER TIES: more tie-breaks, hits column, old files upgraded ============
+import csv as _csv78
+_d78 = tempfile.mkdtemp(); _o78 = _hist.EVENT_FILE
+_hist.EVENT_FILE = os.path.join(_d78, "e.csv")
+_b78 = EventBoard(_hist.EVENT_FILE)
+_b78.add("Ana", 0, 1, 30, 30, hits=40)
+_b78.add("Bo", 0, 1, 30, 30, hits=52)
+_b78.add("Cy", 0, 1, 30, 30, hits=40)
+_r78 = {e["player"]: e for e in _b78.ranking()}
+check("level on score, conceded and rally: more returns ranks higher", _r78["Bo"]["rank"] == 1)
+check("...and still level on everything: a shared rank, flagged as tied",
+      _r78["Ana"]["rank"] == _r78["Cy"]["rank"] == 2 and _r78["Ana"]["tied"] and _r78["Cy"]["tied"])
+_b78.add("Di", 0, 1, 31, 31, hits=1)
+check("a longer rally still beats more returns", {e["player"]: e["rank"] for e in _b78.ranking()}["Di"] == 1)
+_rows78 = list(_csv78.DictReader(open(_hist.EVENT_FILE, newline="", encoding="utf-8-sig")))
+check("the results file records each attempt's returns", [r["hits"] for r in _rows78] == ["40", "52", "40", "1"])
+
+# a file from before the hits column is upgraded on the next write, nothing lost
+_old78 = os.path.join(_d78, "old.csv"); _hist.EVENT_FILE = _old78
+open(_old78, "w", newline="", encoding="utf-8-sig").write(
+    "timestamp,player,attempt,scored,conceded,net,best_rally,best_combo\n"
+    "2026-10-22T18:28:15,Tejas,1,0,12,-12,4,4\n2026-10-23T11:04:08,Pratik,1,0,3,-3,8,8\n")
+_ob = EventBoard(_old78)
+check("an old results file still loads (returns count as 0)", len(_ob.rows) == 2 and all(r["hits"] == 0 for r in _ob.rows))
+_ob.add("Zed", 1, 2, 9, 9, hits=17)
+_up = list(_csv78.DictReader(open(_old78, newline="", encoding="utf-8-sig")))
+check("...the file gets the new column on the next write, old rows kept with a blank",
+      list(_up[0].keys())[-1] == "hits" and [r["player"] for r in _up] == ["Tejas", "Pratik", "Zed"]
+      and _up[0]["hits"] == "" and _up[2]["hits"] == "17" and _up[0]["conceded"] == "12")
+check("...and it reloads with the right ranking", [e["player"] for e in EventBoard(_old78).ranking()][0] == "Zed")
+_hist.EVENT_FILE = _o78
+
+# only a person's returns are counted
+_hc = GameState(); _hc.settings.update(ai_enabled=True, player_side=0, game_mode=2, difficulty=1); _hc.game_state = "PLAYING"
+_hc.current_time = 5.0; _hc.match_names = _hc.player_names()
+engine.reset_ball(_hc, "left"); _hb = next(x for x in _hc.balls if x.is_main)
+_hb.x = _LPX + _PW + 2; _hb.y = _hc.left_paddle_y + 100; _hb.vx = -400; _hb.vy = 0
+engine.check_all_collisions(_hc, Snd())
+check("a return by the person is counted", _hc.total_hits == 1)
+_hb.x = 1280 - _PW - 2 - 2; _hb.y = _hc.right_paddle_y + 100; _hb.vx = 400; _hb.vy = 0
+engine.check_all_collisions(_hc, Snd())
+check("a return by the CPU is not", _hc.total_hits == 1)
+_hc.reset_for_new_game()
+check("the count restarts with every game", _hc.total_hits == 0)
+
+# leaderboard shows the RALLY column
+gfx.set_k(80); _w, _h = gfx.frame_size()
+_lbs = GameState(); _lbs.settings["ai_enabled"] = True; _lbs.event_max_attempts = 1; _lbs.current_time = 50.0; _lbs.screen_entered_at = 40.0
+_lbb = EventBoard(os.path.join(_d78, "lb.csv")); _lbb.add("Ana", 0, 1, 33, 33, hits=40); _lbs.event_board = _lbb
+_fr78 = np.zeros((_h, _w, 3), np.uint8); __import__("game.event_screens", fromlist=["x"]).show_event_home(_fr78, _lbs)
+_k78 = gfx.SCALE
+check("leaderboard: a RALLY column header and the player's rally are drawn",
+      _fr78[int(176 * _k78):int(192 * _k78), int(890 * _k78):int(940 * _k78)].any()
+      and _fr78[int(240 * _k78):int(262 * _k78), int(900 * _k78):int(930 * _k78)].any())
+gfx.set_k(80)
+
+
+# ================== QUALIFIER: CHOOSE LEFT OR RIGHT =======================================
+from game import keys as _keys81, event_screens
+_d81 = tempfile.mkdtemp(); _o81 = (_hist.EVENT_FILE, _hist.HISTORY_FILE, _hist.POINTS_FILE, st_mod.SETTINGS_FILE)
+_hist.EVENT_FILE = os.path.join(_d81, "e.csv"); _hist.HISTORY_FILE = os.path.join(_d81, "h.csv")
+_hist.POINTS_FILE = os.path.join(_d81, "p.csv"); st_mod.SETTINGS_FILE = os.path.join(_d81, "s.json"); st_mod._event_overrides.clear()
+class _Trk81:
+    def reset_calibration(self): pass
+_q81 = GameState(); _q81.current_time = 90.0; _q81.settings["player1_name"] = "ME"; _modes17.enter_qualifier(_q81)
+def _home81(**kw):
+    c = uctx(_q81, t=_q81.current_time + 0.04, **kw); c.hand_pos = {"Left": None, "Right": None}
+    event_handlers.handle_event_home(c, _q81, stats, snd)
+def _name81(**kw):
+    c = uctx(_q81, t=_q81.current_time + 0.04, **kw); c.hand_pos = {"Left": None, "Right": None}
+    event_handlers.handle_event_name(c, _q81, snd, _Trk81())
+_home81(key=32)
+check("the name screen starts on the LEFT side", _q81.game_state == "EVENT_NAME" and _q81.event_side == 0)
+_name81(key=9)
+check("Tab switches to the right side", _q81.event_side == 1)
+_name81(key=9)
+check("...and Tab again back to the left", _q81.event_side == 0)
+_name81(key=255, raw=_keys81.RIGHT)
+check("the right arrow picks RIGHT", _q81.event_side == 1)
+_name81(key=255, raw=_keys81.LEFT)
+check("the left arrow picks LEFT", _q81.event_side == 0)
+_rr81 = event_screens.event_side_rects()
+_name81(mouse=(_rr81[1][0] + 10, _rr81[1][1] + 10), click=True)
+check("clicking RIGHT picks it", _q81.event_side == 1)
+_name81(mouse=(_rr81[0][0] + 10, _rr81[0][1] + 10), click=True)
+check("clicking LEFT picks it", _q81.event_side == 0)
+_name81(mouse=(_rr81[0][0] - 400, _rr81[0][1]), click=True)
+check("typing letters never changes the side", (_name81(key=ord("a")), _q81.event_side)[1] == 0)
+_name81(key=9)                                   # RIGHT
+_q81.name_edit_buf[0] = ""
+for _ch in "Ravi":
+    _name81(key=ord(_ch))
+_name81(key=13)
+check("starting with RIGHT puts the CPU on the left for this game",
+      _q81.game_state == "COUNTDOWN" and _q81.settings["player_side"] == 1 and _q81.cpu_side() == "left")
+check("...and the HUD names follow (CPU on the left, the player on the right)", _q81.player_names() == ("CPU", "Ravi"))
+# the finished game is scored from the person's paddle: CPU left 2 - 7 person right  ->  scored 7, conceded 2
+_q81.game_state = "GAMEOVER"; _q81.match_names = _q81.player_names(); _q81.score = [2, 7]; _q81.winner = "Right Player"
+_q81.max_rally = 12; _q81.max_combo = 12; _q81.total_hits = 30; _q81.stats_saved = False; _q81.gameover_time = 91.0
+_g81 = uctx(_q81, t=95.0); _g81.hand_pos = {"Left": None, "Right": None}
+event_handlers._handle_event_gameover(_g81, _q81, dict(stats), snd)
+_row81 = _q81.event_board.rows[-1]
+check("a right-side game is recorded from the person's side (7 scored, 2 conceded)",
+      _row81["player"] == "Ravi" and _row81["scored"] == 7 and _row81["conceded"] == 2 and _row81["net"] == 5)
+# a left-side game still records score[0] first
+_l81 = GameState(); _l81.current_time = 100.0; _modes17.enter_qualifier(_l81)
+_l81.event_board = _q81.event_board; _l81.event_player = "Lena"; _l81.game_state = "GAMEOVER"; _l81.match_names = ("Lena", "CPU")
+_l81.score = [4, 1]; _l81.winner = "Left Player"; _l81.stats_saved = False; _l81.max_rally = 5; _l81.max_combo = 5; _l81.gameover_time = 100.0
+_g82 = uctx(_l81, t=105.0); _g82.hand_pos = {"Left": None, "Right": None}
+event_handlers._handle_event_gameover(_g82, _l81, dict(stats), snd)
+_lr81 = _l81.event_board.rows[-1]
+check("a left-side game is recorded as before (4 scored, 1 conceded)", _lr81["scored"] == 4 and _lr81["conceded"] == 1)
+# the side choice is a temporary override: leaving restores the player's own setting
+_q81.settings["player_side"] = 1
+_modes17.leave_tournament(_q81)
+check("leaving the tournament restores the player's own side setting", _q81.settings["player_side"] in (0, 1) and not st_mod._event_overrides)
+# the dialog draws both choices
+gfx.set_k(80); _w, _h = gfx.frame_size()
+_dlg = GameState(); _dlg.settings["ai_enabled"] = True; _dlg.event_max_attempts = 1; _dlg.current_time = 5.0
+_dlg.event_board = EventBoard(os.path.join(_d81, "dlg.csv")); _dlg.name_edit_buf = ["Ravi", ""]
+def _dshot(side):
+    _dlg.event_side = side; fr = np.zeros((_h, _w, 3), np.uint8); event_screens.draw_event_name_dialog(fr, _dlg); return fr
+_k81 = gfx.SCALE; _r0, _r1 = event_screens.event_side_rects()
+def _reg(fr, r): return fr[int(r[1] * _k81):int((r[1] + r[3]) * _k81), int(r[0] * _k81):int((r[0] + r[2]) * _k81)].astype(int).sum()
+_dl, _dr = _dshot(0), _dshot(1)
+check("the selected side is drawn highlighted",
+      _reg(_dl, _r0) > _reg(_dl, _r1) * 1.5 and _reg(_dr, _r1) > _reg(_dr, _r0) * 1.5)
+(_hist.EVENT_FILE, _hist.HISTORY_FILE, _hist.POINTS_FILE, st_mod.SETTINGS_FILE) = _o81; st_mod._event_overrides.clear()
+gfx.set_k(80)
+
 print(f"\n{check.total - len(check.failures)}/{check.total} checks passed")
 print("ALL PASSED" if not check.failed else "SOME FAILED")
 sys.exit(1 if check.failed else 0)

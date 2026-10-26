@@ -6,7 +6,7 @@
 Matches are played in the order  SF1, SF2, THIRD, FINAL.  The higher seed plays
 on the left.
 
-Ties at the cut-off.  If players are level on (score, conceded, rally) across the
+Ties at the cut-off.  If players are level on (score, conceded, rally, returns) across the
 4th/5th place line, there are more contenders than seats.  They settle it with
 sudden-death PLAYOFF matches first:  PO1 = contender 1 v 2, PO2 = winner of PO1
 v contender 3, ... until the seats are filled.  (A contender not yet reached by
