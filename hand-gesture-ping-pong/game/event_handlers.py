@@ -6,10 +6,24 @@
 
 from game import modes
 from game.config import EVENT_RESULT_SECONDS, FINALS_RESULT_SECONDS
-from game import event_screens, renderer
+from game import event_screens, menu_screens, renderer
 from game import history, stats as stats_mod
 from game.flow import FrameCtx, do_start_game
 from game.stats import record_game_result, clean_name, NAME_CHARS, NAME_MAX_LEN, set_event_overrides
+
+
+def _help_overlay(ctx: FrameCtx, state) -> bool:
+    """HOW TO PLAY on the leaderboard / bracket (H opens; H, Esc, Enter, Space or a click closes).
+    Returns True while it is up, so nothing underneath reacts."""
+    if state.show_help:
+        menu_screens.draw_help_overlay(ctx.frame, state)
+        if ctx.key in (27, 13, 32, ord('h'), ord('H')) or ctx.mouse_clicked:
+            state.show_help = False
+        return True
+    if ctx.key in (ord('h'), ord('H')):
+        state.show_help = True
+        return True
+    return False
 
 
 def _tournament_exit_dialog(ctx: FrameCtx, state, sound_mgr) -> bool:
@@ -35,6 +49,8 @@ def handle_event_home(ctx: FrameCtx, state, stats, sound_mgr) -> None:
 
     renderer.draw_animated_bg(ctx.frame, state, ctx.theme)
     event_screens.show_event_home(ctx.frame, state)
+    if _help_overlay(ctx, state):
+        return
     if _tournament_exit_dialog(ctx, state, sound_mgr):
         return
 
@@ -126,6 +142,8 @@ def handle_finals_home(ctx: FrameCtx, state, stats, sound_mgr, tracker) -> None:
     if state.finals_withdraw is not None:             # dialog open: it takes all input
         event_screens.draw_finals_withdraw_dialog(ctx.frame, state)
         _handle_finals_withdraw(ctx, state, sound_mgr)
+        return
+    if _help_overlay(ctx, state):
         return
     if _tournament_exit_dialog(ctx, state, sound_mgr):
         return

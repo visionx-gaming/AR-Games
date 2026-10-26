@@ -368,7 +368,7 @@ try:
             else:
                 key = 27
 
-        if key == 27 and not state.event_mode:
+        if key == 27:
             in_game = ("PLAYING", "PAUSED", "COUNTDOWN")
             if state_at_frame_start in in_game and state.game_state in in_game:
                 # Open in-game menu instead of quitting.  Uses the state the
@@ -377,7 +377,7 @@ try:
                 state.previous_state = state.game_state
                 state.menu_selection = 0
                 state.game_state = "MENU"
-            elif state_at_frame_start == "GAMEOVER":
+            elif state_at_frame_start == "GAMEOVER" and not state.event_mode:
                 state.gesture_armed = False
                 state.start_gesture_time = None
                 state.game_state = "START"

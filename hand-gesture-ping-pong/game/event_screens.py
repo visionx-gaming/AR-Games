@@ -89,7 +89,7 @@ def show_event_home(frame, state):
         ui.text(frame, str(e["attempts"]), cols["tries"] + dx, ry, 18, ui.TEXT_2, "center", "semi", opacity=p)
 
     _cta(frame, "PRESS SPACE TO PLAY", "SPACE", 628, accent, now)
-    ui.hints(frame, [("ESC", "Organiser: leave tournament"), ("F", "Fullscreen"), ("C", "Camera")], y=30)
+    ui.hints(frame, [("H", "How to play"), ("ESC", "Organiser: leave"), ("F", "Fullscreen"), ("C", "Camera")], y=30)
     mx = state.event_max_attempts
     ui.text(frame, f"{len(ranking)} PLAYERS   -   {len(board.rows)} GAMES   -   {mx} ATTEMPT{'S' if mx != 1 else ''} EACH",
             CX, 706, 13, ui.TEXT_3, "center", "bold", spacing=2)

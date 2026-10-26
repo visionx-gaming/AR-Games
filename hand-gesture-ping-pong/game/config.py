@@ -228,6 +228,23 @@ COLOR_THEMES = [
         "powerup_multi": (0, 255, 255),
         "obstacle":      (0, 80, 150),
     },
+    {
+        "name": "Contrast",                      # colour-blind safe: blue vs orange paddles, yellow ball
+        "ball":          (66, 228, 240),
+        "ball_hit":      (255, 255, 255),
+        "left_paddle":   (233, 180, 86),
+        "right_paddle":  (0, 159, 230),
+        "court":         (230, 230, 230),
+        "glow":          (200, 200, 200),
+        "bg_grid":       (60, 60, 60),
+        "score_popup":   (66, 228, 240),
+        "accent":        (233, 180, 86),
+        "powerup_big":   (115, 158, 0),
+        "powerup_fast":  (0, 94, 213),
+        "powerup_slow":  (167, 121, 204),
+        "powerup_multi": (233, 180, 86),
+        "obstacle":      (130, 130, 130),
+    },
 ]
 
 THEME_NAMES = [t["name"] for t in COLOR_THEMES]

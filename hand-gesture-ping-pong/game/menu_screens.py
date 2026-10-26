@@ -124,7 +124,7 @@ def show_start_screen(frame, state, stats):
 
     _mode_card(frame, state, stats, theme)
     ui.hints(frame, [("W S", "Navigate"), ("A D", "Change"), ("ENTER", "Select"), ("SPACE", "Play"),
-                     ("F", "Fullscreen"), ("C", "Camera")])
+                     ("H", "How to play"), ("F", "Fullscreen"), ("C", "Camera")])
 
 
 # ===================================================================
@@ -183,7 +183,6 @@ def draw_name_dialog(frame, state):
 #  IN-GAME MENU  (ESC)
 # ===================================================================
 
-MENU_ITEMS = ["Resume", "Settings", "Quit to Main Menu", "Quit Game"]
 _MENU_X, _MENU_Y, _MENU_W, _MENU_H = CX - 240, 110, 480, 500
 
 
@@ -203,14 +202,14 @@ def menu_screen(ctx, state, sound_mgr):
     ui.text(ctx.frame, "MENU", CX, _MENU_Y + 62, 42, ui.TEXT, "center", "bold", spacing=3, shadow=True)
     n1, n2 = state.match_names
     ui.text(ctx.frame, f"{n1}  {state.score[0]}  -  {state.score[1]}  {n2}", CX, _MENU_Y + 108, 19, ui.TEXT_2, "center", "semi")
-    ui.text(ctx.frame, GAME_MODE_NAMES[state.settings["game_mode"]].upper() + "  -  MATCH PAUSED", CX, _MENU_Y + 138, 14,
-            ui.TEXT_3, "center", "bold", spacing=2)
+    sub_line = "TOURNAMENT  -  GAME ON HOLD" if state.event_mode else GAME_MODE_NAMES[state.settings["game_mode"]].upper() + "  -  MATCH PAUSED"
+    ui.text(ctx.frame, sub_line, CX, _MENU_Y + 138, 14, ui.TEXT_3, "center", "bold", spacing=2)
     ui.hline(ctx.frame, _MENU_X + 30, _MENU_X + _MENU_W - 30, _MENU_Y + 164, ui.mix(ui.PANEL, (255, 255, 255), 0.14))
 
     items = [
         {"id": 0, "label": "RESUME", "kind": "button", "primary": True, "hint": "ESC"},
         {"id": 1, "label": "SETTINGS", "kind": "button"},
-        {"id": 2, "label": "QUIT TO MAIN MENU", "kind": "button"},
+        {"id": 2, "label": "ABANDON GAME" if state.event_mode else "QUIT TO MAIN MENU", "kind": "button"},
         {"id": 3, "label": "QUIT GAME", "kind": "button", "danger": True},
     ]
     rects = menu_rects()
@@ -271,6 +270,92 @@ def _mode_line(state):
     return f"{TIME_ATTACK_DURATION} SECONDS  -  MOST POINTS WINS"
 
 
+def _point_banner(frame, state):
+    """Between rallies: who just scored, in the "GET READY" line for two seconds.  True if drawn."""
+    if state.last_point is None or state.settings["game_mode"] == 1:
+        return False
+    side, t0 = state.last_point
+    age = state.current_time - t0
+    if not 0 <= age < 2.0:
+        return False
+    theme = get_theme(state.settings)
+    col = theme["left_paddle"] if side == 0 else theme["right_paddle"]
+    pop = 1.0 + 0.25 * max(0.0, 1.0 - age / 0.3) ** 2
+    fade = min(1.0, (2.0 - age) / 0.4)
+    name = ui.fit_text(state.match_names[side], 30, "bold", 420).upper()
+    label_w = ui.text_width("POINT  ", 30, "bold", 1.5)
+    name_w = ui.text_width(name, 30, "bold", 1.5)
+    x0 = CX - (label_w + name_w) / 2
+    ui.text(frame, "POINT", x0, CY - 168, round(30 * pop), ui.TEXT_2, "left", "bold", opacity=fade, spacing=1.5)
+    ui.text(frame, name, x0 + label_w, CY - 168, round(30 * pop), col, "left", "bold", opacity=fade, spacing=1.5, shadow=True)
+    return True
+
+
+def _hand_icon(frame, cx, cy, s, color):
+    """A flat open hand: palm, four fingers, thumb (s = palm width)."""
+    ui.fill_rrect(frame, cx - s / 2, cy - s * 0.1, s, s * 0.8, s * 0.22, color)
+    for i in range(4):
+        fh = s * (0.62 if i in (1, 2) else 0.5)
+        ui.fill_rrect(frame, cx - s / 2 + i * s * 0.27, cy - s * 0.1 - fh, s * 0.2, fh + s * 0.2, s * 0.1, color)
+    ui.fill_rrect(frame, cx - s * 0.72, cy + s * 0.12, s * 0.42, s * 0.2, s * 0.1, color)
+
+
+def _help_card(frame, x, y, w, h, n, title, lines, theme):
+    ui.panel(frame, x, y, w, h, 16, alpha=0.55)
+    ui.disc(frame, x + 28, y + 30, 14, theme["accent"])
+    ui.text(frame, str(n), x + 28, y + 30, 17, (24, 20, 18), "center", "bold")
+    ui.text(frame, title, x + 52, y + 30, 19, ui.TEXT, "left", "bold", spacing=1.0)
+    for i, ln in enumerate(lines):
+        ui.text(frame, ln, x + 22, y + h - 64 + i * 24, 16, ui.TEXT_2, "left", "medium")
+
+
+def draw_help_overlay(frame, state):
+    """HOW TO PLAY: three pictured steps, the rules of the selected mode and a few tips."""
+    theme = get_theme(state.settings)
+    acc, now = theme["accent"], state.current_time
+    draw_overlay(frame, 0.90)
+    px, py, pw, ph = CX - 480, 56, 960, 608
+    ui.panel(frame, px, py, pw, ph, 22, alpha=0.97)
+    ui.text(frame, "HOW TO PLAY", CX, py + 50, 38, ui.TEXT, "center", "bold", spacing=2, shadow=True)
+
+    cw, ch, cy0 = 290, 250, py + 92
+    xs = [px + 24 + i * (cw + 18) for i in range(3)]
+    # 1. stand back, hand up
+    _help_card(frame, xs[0], cy0, cw, ch, 1, "STAND BACK", ["About one metre from the camera.", "Keep your hand up and open."], theme)
+    ui.rrect(frame, xs[0] + 55, cy0 + 56, 180, 100, 12, ui.TEXT_3, 2)               # the camera's view
+    _hand_icon(frame, xs[0] + 145, cy0 + 118, 46, ui.mix(acc, (255, 255, 255), 0.2))
+    # 2. move the hand = move the paddle
+    _help_card(frame, xs[1], cy0, cw, ch, 2, "MOVE YOUR HAND", ["Up and down moves your paddle.", "Hit near the edge to angle the ball."], theme)
+    bob = math.sin(now * 2.6) * 24
+    ui.fill_rrect(frame, xs[1] + 232, cy0 + 82 + bob, 10, 56, 5, theme["left_paddle"])
+    _hand_icon(frame, xs[1] + 120, cy0 + 118 + bob, 42, ui.mix(acc, (255, 255, 255), 0.2))
+    ui.triangle(frame, xs[1] + 60, cy0 + 70, 8, "up", ui.TEXT_3)
+    ui.triangle(frame, xs[1] + 60, cy0 + 168, 8, "down", ui.TEXT_3)
+    # 3. sides
+    _help_card(frame, xs[2], cy0, cw, ch, 3, "YOUR SIDE", ["Left of the picture is player 1,", "right is player 2 (or the CPU)."], theme)
+    ui.rrect(frame, xs[2] + 55, cy0 + 56, 180, 100, 12, ui.TEXT_3, 2)
+    ui.hline(frame, xs[2] + 145, xs[2] + 146, cy0 + 56, ui.TEXT_3)
+    ui.fill_rrect(frame, xs[2] + 144, cy0 + 60, 2, 92, 1, ui.TEXT_3)
+    ui.text(frame, "P1", xs[2] + 100, cy0 + 106, 26, theme["left_paddle"], "center", "bold")
+    ui.text(frame, "P2", xs[2] + 190, cy0 + 106, 26, theme["right_paddle"], "center", "bold")
+
+    ty = cy0 + ch + 38
+    ui.text(frame, "THE GAME", px + 36, ty, 13, ui.TEXT_3, "left", "bold", spacing=2.4)
+    ui.text(frame, "THIS MODE", px + 36, ty + 66, 13, ui.TEXT_3, "left", "bold", spacing=2.4)
+    ui.text(frame, "NO CAMERA OR TROUBLE", px + 36, ty + 132, 13, ui.TEXT_3, "left", "bold", spacing=2.4)
+    if state.event_mode:
+        rule = ("Beat the CPU for 60 seconds. Every point counts; your best attempt goes on the leaderboard."
+                if state.finals is None else "Head to head, first to the target score. Tell the organiser if you need to withdraw.")
+    else:
+        rule = _mode_line(state).capitalize() + "."
+    ui.text(frame, "Rally for points. Miss the ball and your opponent scores. The ball speeds up the longer you play.",
+            px + 36, ty + 28, 17, ui.TEXT_2, "left", "medium")
+    ui.text(frame, rule, px + 36, ty + 94, 17, ui.TEXT_2, "left", "medium")
+    ui.text(frame, "W / S or the arrow keys move a paddle.  C switches camera.  Good light on your hand helps a lot.",
+            px + 36, ty + 160, 17, ui.TEXT_2, "left", "medium")
+    ui.hints(frame, [("H / ESC", "Close")], backdrop=True)
+
+
 def _hand_chip(frame, state, hand, cx, y):
     """Under a player's name plate: is their hand being tracked yet?"""
     if not state.camera_ok:
@@ -301,7 +386,8 @@ def show_countdown_screen(frame, state):
             _hand_chip(frame, state, side, plate_cx, CY + 84)
 
     remaining = COUNTDOWN_DURATION - (state.current_time - state.countdown_start)
-    ui.text(frame, "GET READY", CX, CY - 168, 24, ui.TEXT_2, "center", "bold", spacing=6)
+    if not _point_banner(frame, state):
+        ui.text(frame, "GET READY", CX, CY - 168, 24, ui.TEXT_2, "center", "bold", spacing=6)
     if remaining > 0:
         frac = 1.0 - (remaining % 1)
         ui.progress_ring(frame, CX, CY, 104, frac, theme["accent"], ui.mix(ui.PANEL, (255, 255, 255), 0.10), 7)

@@ -209,6 +209,8 @@ class GameState:
         # --- Event (tournament) mode ---
         self.event_mode = False
         self.screen_entered_at = 0.0           # when the current screen appeared (for entrance animations)
+        self.last_point = None                 # (side, time) of the latest point, for the banner between rallies
+        self.show_help = False                 # the HOW TO PLAY overlay is open
         self.new_best = False                  # the game that just ended beat a high score
         self.event_last_player = ""            # who just played (highlighted on the leaderboard)
         self.tournament_exit_confirm = False   # organiser asked to leave the tournament screens
@@ -254,6 +256,8 @@ class GameState:
     def reset_for_new_game(self):
         """Reset state for a new game while keeping settings."""
         self.new_best = False
+        self.last_point = None
+        self.show_help = False
         self.score = [0, 0]
         self.winner = ""
         self.balls.clear()

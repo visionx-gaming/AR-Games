@@ -369,6 +369,7 @@ def _award_point(state, missed_side, theme):
     Returns True if that ended the game."""
     idx = 1 if missed_side == "left" else 0
     state.score[idx] += 1
+    state.last_point = (idx, state.current_time)
     state.point_log.append((round(state.game_time, 1), idx, state.score[0], state.score[1]))
     state.score_flash_time[idx] = state.current_time
     px = WINDOW_WIDTH * 3 // 4 if idx == 1 else WINDOW_WIDTH // 4

@@ -1962,6 +1962,95 @@ _late = _lbshot("", 40.0)[int(210 * k):int(330 * k), int(280 * k):int(1000 * k)]
 check("leaderboard: rows slide in (fewer visible at the very start of the screen)", _early < _late)
 gfx.set_k(80)
 
+
+# ================== UX ROUND 2: help overlay, point banner, Contrast theme ================
+from game.config import COLOR_THEMES as _CT, THEME_NAMES as _TN
+check("a colour-blind-safe Contrast theme exists", "Contrast" in _TN and len(_CT) == 5)
+_ct = _CT[4]
+check("Contrast: the two paddles differ strongly (blue vs orange)", abs(_ct["left_paddle"][0] - _ct["right_paddle"][0]) > 150)
+check("every theme defines every colour key", all(set(t) == set(_CT[0]) for t in _CT))
+check("theme index 4 survives settings validation", st_mod._validated_settings({"color_theme": 4})["color_theme"] == 4
+      and st_mod._validated_settings({"color_theme": 9})["color_theme"] == 4)
+
+# the point that was just scored is remembered, and the banner shows only for ~2 s
+_pb = GameState(); _pb.settings.update(ai_enabled=False, game_mode=0, score_to_win=5); _pb.match_names = ("ANA", "BOB")
+_pb.current_time = 30.0; engine._award_point(_pb, "right", get_theme(_pb.settings))
+check("scoring records who scored and when", _pb.last_point == (0, 30.0))
+gfx.set_k(80); _w, _h = gfx.frame_size()
+def _cdshot(now):
+    _pb.current_time = now; _pb.countdown_start = 30.0; _pb.camera_ok = False
+    fr = np.zeros((_h, _w, 3), np.uint8); menu_screens.show_countdown_screen(fr, _pb)
+    k = gfx.SCALE; return fr[int(180 * k):int(204 * k), int(440 * k):int(840 * k)]
+_ban, _late = _cdshot(30.6), _cdshot(33.0)
+check("the POINT banner replaces GET READY for two seconds, then GET READY returns",
+      _ban.astype(int).sum() > 0 and not np.array_equal(_ban, _late) and _late.astype(int).sum() > 0)
+_pb.settings["game_mode"] = 1
+_surv = _cdshot(30.6)
+check("Survival has no point banner (no scores)", np.array_equal(_surv, _late))
+
+# HOW TO PLAY overlay: H opens, H / Esc / Enter / Space / click close; typing an h in a name box must not open it
+_hs = GameState(); _hs.game_state = "START"; _hs.current_time = 60.0
+def _start(s, **kw):
+    c = uctx(s, t=s.current_time + 0.04, **kw); c.hand_pos = {"Left": None, "Right": None}
+    handlers.handle_start(c, s, stats, snd, FakeTracker())
+_start(_hs); _start(_hs, key=ord('h'))
+check("main menu: H opens HOW TO PLAY", _hs.show_help is True)
+_start(_hs, key=ord('h'))
+check("...and H closes it", _hs.show_help is False)
+for _k in (27, 13, 32):
+    _hs.show_help = True; _start(_hs, key=_k)
+    check(f"...key {_k} closes it without doing anything else", _hs.show_help is False and _hs.game_state == "START")
+_hs.show_help = True; _start(_hs, mouse=(5, 5), click=True)
+check("...a click closes it", _hs.show_help is False)
+_hs.name_edit_active = True; _hs.name_edit_buf = ["", ""]; _hs.name_edit_idx = 0 if hasattr(_hs, "name_edit_idx") else 0
+_start(_hs, key=ord('h'))
+check("typing an h in the name box does not open the overlay", _hs.show_help is False)
+_hs.name_edit_active = False; _hs.show_exit_confirm = True
+_start(_hs, key=ord('h'))
+check("H does not open it over the exit confirmation", _hs.show_help is False)
+
+# on the tournament leaderboard / finals bracket
+_d76 = tempfile.mkdtemp(); _o76 = (_hist.EVENT_FILE, _hist.FINALS_FILE, st_mod.SETTINGS_FILE)
+_hist.EVENT_FILE = os.path.join(_d76, "e.csv"); _hist.FINALS_FILE = os.path.join(_d76, "f.csv"); st_mod.SETTINGS_FILE = os.path.join(_d76, "s.json")
+_ev = GameState(); _ev.current_time = 70.0; _modes17.enter_qualifier(_ev)
+def _evh(s, **kw):
+    c = uctx(s, t=s.current_time + 0.04, **kw); c.hand_pos = {"Left": None, "Right": None}
+    event_handlers.handle_event_home(c, s, stats, snd)
+_evh(_ev, key=ord('h'))
+check("leaderboard: H opens HOW TO PLAY (qualifier wording)", _ev.show_help is True)
+_evh(_ev, key=27)
+check("...Esc closes the help first, it does not open the organiser exit prompt",
+      _ev.show_help is False and _ev.tournament_exit_confirm is False)
+_evh(_ev, key=32)
+check("...and Space afterwards still starts the name entry", _ev.game_state == "EVENT_NAME")
+(_hist.EVENT_FILE, _hist.FINALS_FILE, st_mod.SETTINGS_FILE) = _o76; st_mod._event_overrides.clear()
+gfx.set_k(80)
+
+
+# ================== ESC MENU INSIDE A TOURNAMENT ==========================================
+_d77 = tempfile.mkdtemp(); _o77 = (_hist.EVENT_FILE, _hist.FINALS_FILE, st_mod.SETTINGS_FILE)
+_hist.EVENT_FILE = os.path.join(_d77, "e.csv"); _hist.FINALS_FILE = os.path.join(_d77, "f.csv"); st_mod.SETTINGS_FILE = os.path.join(_d77, "s.json")
+_tm = GameState(); _tm.current_time = 80.0; _modes17.enter_qualifier(_tm)
+_tm.game_state = "MENU"; _tm.previous_state = "PLAYING"; _tm.match_names = ("ZED", "CPU")
+_gx = uctx(_tm, t=80.1); _gx.hand_pos = {"Left": None, "Right": None}
+handlers._menu_select(_gx, _tm, snd, 2)
+check("tournament ESC menu: ABANDON GAME goes back to the leaderboard", _tm.game_state == "EVENT_HOME" and _tm.event_mode)
+check("...and records nothing (the attempt is not used up)", len(_tm.event_board.rows) == 0 and _tm.event_board.attempts("ZED") == 0)
+_tm.game_state = "MENU"; _tm.previous_state = "PLAYING"; handlers._menu_select(_gx, _tm, snd, 0)
+check("tournament ESC menu: RESUME returns to the game", _tm.game_state in ("COUNTDOWN", "PLAYING"))
+_nm = GameState(); _nm.current_time = 81.0; _nm.game_state = "MENU"
+handlers._menu_select(_gx, _nm, snd, 2)
+check("normal game: the same menu entry still quits to the main menu", _nm.game_state == "START")
+gfx.set_k(80); _w, _h = gfx.frame_size()
+def _menu_img(st):
+    fr = np.zeros((_h, _w, 3), np.uint8); c = uctx(st, t=st.current_time + 0.04); c.frame = fr
+    c.hand_pos = {"Left": None, "Right": None}; menu_screens.menu_screen(c, st, snd); return fr
+_tm.game_state = "MENU"
+check("the in-game menu looks different in a tournament (ABANDON GAME / GAME ON HOLD)",
+      not np.array_equal(_menu_img(_tm), _menu_img(_nm)))
+(_hist.EVENT_FILE, _hist.FINALS_FILE, st_mod.SETTINGS_FILE) = _o77; st_mod._event_overrides.clear()
+gfx.set_k(80)
+
 print(f"\n{check.total - len(check.failures)}/{check.total} checks passed")
 print("ALL PASSED" if not check.failed else "SOME FAILED")
 sys.exit(1 if check.failed else 0)

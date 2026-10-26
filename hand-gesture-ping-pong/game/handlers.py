@@ -56,7 +56,12 @@ def _menu_select(ctx, state, sound_mgr, sel):
         state.previous_state = ""
         state.gesture_armed = False
         state.start_gesture_time = None
-        state.game_state = "START"
+        if state.event_mode:
+            # Tournament: drop this game (nothing is recorded, the attempt is not used up)
+            # and go back to the leaderboard / bracket for the organiser
+            state.game_state = "FINALS_HOME" if state.finals is not None else "EVENT_HOME"
+        else:
+            state.game_state = "START"
     elif sel == 3:
         state.game_state = "QUIT"
 
@@ -124,6 +129,16 @@ def handle_start(ctx: FrameCtx, state, stats, sound_mgr, tracker) -> None:
         renderer.draw_hand_skeletons(ctx.frame, state, ctx.mp_hand_connections)
 
     menu_screens.show_start_screen(ctx.frame, state, stats)
+
+    # ── How-to-play overlay (any of H / Esc / Enter / Space / a click closes it) ──
+    if state.show_help:
+        menu_screens.draw_help_overlay(ctx.frame, state)
+        if ctx.key in (27, 13, 32, ord('h'), ord('H')) or ctx.mouse_clicked:
+            state.show_help = False
+        return
+    if ctx.key in (ord('h'), ord('H')) and not state.name_edit_active and not state.show_exit_confirm:
+        state.show_help = True
+        return
 
     # ── Player-name dialog (takes all input while open) ───────────
     if state.name_edit_active:
