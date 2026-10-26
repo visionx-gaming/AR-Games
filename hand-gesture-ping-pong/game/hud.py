@@ -80,9 +80,13 @@ def draw_hud(frame, state, theme):
     _player_card(frame, state, 1, n2, state.score[1], theme["right_paddle"], show_score)
     _center_pill(frame, state, theme)
     lvl = difficulty.cpu_level(state)
-    if lvl:
+    if lvl:                                                    # vs CPU: level 1-5
         ui.text(frame, f"CPU LEVEL {lvl}", WINDOW_WIDTH // 2, _CARD_Y + _CARD_H + 16, 13,
                 ui.DANGER if lvl >= 4 else ui.TEXT_2, "center", "bold", spacing=1.8)
+    else:                                                      # two players: the ball speed multiplier
+        mult = difficulty.speed_multiplier(state)
+        ui.text(frame, f"SPEED x{mult:.1f}", WINDOW_WIDTH // 2, _CARD_Y + _CARD_H + 16, 13,
+                ui.DANGER if mult >= 1.35 else ui.TEXT_2, "center", "bold", spacing=1.8)
     _powerup_pills(frame, state, theme)
 
 

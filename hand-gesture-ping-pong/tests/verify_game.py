@@ -1189,8 +1189,9 @@ one, ofd, *_ = make_system(sizes=((1920, 1080),), cur=0)
 one.cycle_display(1); check("single monitor: choosing another does nothing", ofd.calls == [])
 
 # ---- monitors plugged / unplugged while running --------------------------------------------------
-sy, fd, fc, st, saves, toasts, attached = make_system(cur=1)
 real_n = _pg.display.get_num_displays
+_pg.display.get_num_displays = lambda: 2          # the fake rig has two monitors, whatever is attached right now
+sy, fd, fc, st, saves, toasts, attached = make_system(cur=1)
 _pg.display.get_num_displays = lambda: 1
 sy.poll(now=_time.monotonic() + 5)
 check("monitor unplugged while the game is on it: moves to the remaining one and says so",
@@ -1560,7 +1561,7 @@ check("vs CPU ramp goes 0 -> 0.5 -> capped at 1", _p0 == 0 and abs(_p1 - 0.5) < 
 _r.settings["game_mode"] = 2; _r.game_time = _cfg12.TIME_ATTACK_RAMP_SECONDS / 2
 check("Time Attack ramps over its own 40 s", abs(difficulty.ramp_progress(_r) - 0.5) < 1e-6)
 _r.settings["ai_enabled"] = False; _r.game_time = 100
-check("two-player games never ramp", difficulty.ramp_progress(_r) == 0)
+check("two-player games ramp too (ball speed)", difficulty.ramp_progress(_r) > 0)
 
 def _ai_dist(gt):
     s = GameState(); s.settings["ai_enabled"] = True; s.settings["game_mode"] = 0; s.settings["difficulty"] = 1
@@ -1624,6 +1625,17 @@ check("CPU level label runs 1..5", difficulty.cpu_level(_q) == 3 and
       (_q.__setattr__("game_time", 999) or difficulty.cpu_level(_q)) == 5)
 _q.settings["ai_enabled"] = False
 check("no CPU level in two-player games", difficulty.cpu_level(_q) is None)
+_q.game_time = 0; _q.score = [0, 0]
+check("two players: ball speed multiplier starts at 1.0 and reaches the ramp maximum",
+      abs(difficulty.speed_multiplier(_q) - 1.0) < 1e-6 and (_q.__setattr__("game_time", 999) or True)
+      and abs(difficulty.speed_multiplier(_q) - 1.5) < 1e-6)
+def _serve2p(gt):
+    s = GameState(); s.settings.update(ai_enabled=False, game_mode=0, difficulty=1); s.game_time = gt
+    engine.reset_ball(s, "right"); b = next(x for x in s.balls if x.is_main); return math.hypot(b.vx, b.vy)
+check("two players: the ball serves faster late in a game", _serve2p(120) > _serve2p(0) * 1.3)
+_h2 = GameState(); _h2.settings["ai_enabled"] = False; _h2.game_time = 70; _h2.match_names = ("A", "B")
+_hf = np.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3), np.uint8); __import__('game.hud', fromlist=['draw_hud']).draw_hud(_hf, _h2, get_theme(_h2.settings))
+check("two players: the HUD draws a SPEED readout under the score", _hf[88:112, 560:720].any())
 _q.settings["ai_enabled"] = True; _q.score = [0, 0]; _q.game_time = 0
 _a = _ai_dist(0); _z = _ai_dist(90)
 check("late-game CPU is at least 1.8x as quick as at the start", _z > _a * 1.8)
