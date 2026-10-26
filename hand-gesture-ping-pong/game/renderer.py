@@ -2,8 +2,6 @@
 
 import numpy as np
 import math
-from PIL import Image, ImageDraw, ImageFilter
-from game import font as _font
 from game import gfx
 import cv2 as _cv                # real cv2: pixel-space operations and constants
 from game.config import (
@@ -61,24 +59,7 @@ def draw_overlay(frame, alpha=0.5):
     _cv.convertScaleAbs(frame, dst=frame, alpha=1.0 - alpha)
 
 
-def _scale_to_px(scale: float) -> int:
-    """Map legacy cv2 scale float → Press Start 2P pixel size.
-
-    A continuous formula rather than a coarse bucket table: pulsing/animated
-    scale values (combo pop, countdown beat, score-flash growth) now render
-    at a genuinely different size each step instead of several distinct
-    inputs collapsing onto the same fixed pixel size."""
-    return max(6, round(scale * 15 + 3))
-
-
-_TEXT_CACHE: dict = {}
 _CACHE_LIMIT = 300
-
-
-def _cache_put(cache: dict, key, value) -> None:
-    if len(cache) >= _CACHE_LIMIT:
-        del cache[next(iter(cache))]
-    cache[key] = value
 
 
 def _prep_tile(arr):
@@ -107,67 +88,6 @@ def _composite(frame, tile, fx: int, fy: int) -> None:
         wb = np.ascontiguousarray(wb[sy1:sy2, sx1:sx2])
     roi = frame[fy1:ey, fx1:ex]
     roi[:] = _cv.blendLinear(bgr, np.ascontiguousarray(roi), wa, wb)
-
-
-def draw_arcade_text(frame, text, cx, y, scale, color, thickness=3, shadow=True):
-    """Center-aligned Press Start 2P text with neon glow.  y = baseline.
-
-    thickness > 3 adds a pixel stroke around the glyph for extra boldness
-    (e.g. titles, score-flash emphasis); thickness <= 3 is normal weight.
-    """
-    S   = gfx.SCALE
-    px  = max(6, round(_scale_to_px(scale) * S))     # glyphs are re-rendered at native size
-    r, g, b = color[2], color[1], color[0]          # BGR → RGB
-    stroke = max(0, round((int(thickness) - 3) * S)) if int(thickness) > 3 else 0
-
-    key = (text, px, r, g, b, shadow, stroke, round(S * 100))
-    if key not in _TEXT_CACHE:
-        fnt  = _font.get(px)
-        bbox = fnt.getbbox(text)                     # (x0, y0, x1, y1)
-        tw   = bbox[2] - bbox[0]
-        th   = bbox[3] - bbox[1]
-        pad  = round(7 * S) + stroke
-        sw, sh = tw + pad * 2, th + pad * 2
-
-        # Silhouette mask for glow layers (stroke widens the glyph)
-        sil = Image.new("L", (sw, sh), 0)
-        ImageDraw.Draw(sil).text(
-            (pad - bbox[0], pad - bbox[1]), text, font=fnt, fill=255,
-            stroke_width=stroke, stroke_fill=255)
-
-        surf = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-
-        if shadow:
-            sh_mask = Image.new("L", (sw, sh), 0)
-            ImageDraw.Draw(sh_mask).text(
-                (pad - bbox[0] + max(1, round(2 * S)), pad - bbox[1] + max(1, round(3 * S))),
-                text, font=fnt, fill=160)
-            sh_layer = Image.new("RGBA", (sw, sh), (0, 0, 0, 255))
-            sh_layer.putalpha(sh_mask)
-            surf = Image.alpha_composite(surf, sh_layer)
-
-        # Outer glow (large blur, very dim)
-        g1 = Image.new("RGBA", (sw, sh), (r // 5, g // 5, b // 5, 255))
-        g1.putalpha(sil.filter(ImageFilter.GaussianBlur(5 * S)))
-        surf = Image.alpha_composite(surf, g1)
-
-        # Mid glow
-        g2 = Image.new("RGBA", (sw, sh), (r // 2, g // 2, b // 2, 255))
-        g2.putalpha(sil.filter(ImageFilter.GaussianBlur(2 * S)))
-        surf = Image.alpha_composite(surf, g2)
-
-        # Main fill
-        fill = Image.new("RGBA", (sw, sh), (r, g, b, 255))
-        fill.putalpha(sil)
-        surf = Image.alpha_composite(surf, fill)
-
-        tile = _prep_tile(np.array(surf))
-        _cache_put(_TEXT_CACHE, key, (tile, tw, th, pad))
-    else:
-        tile, tw, th, pad = _TEXT_CACHE[key]
-
-    # y is baseline; top of glyph = y - th; subtract pad for surface origin
-    _composite(frame, tile, round(cx * S) - tw // 2 - pad, round(y * S) - th - pad)
 
 
 # ===================================================================
@@ -501,17 +421,16 @@ def draw_particles(frame, state):
 
 
 def draw_floating_texts(frame, state):
-    """Draw floating score popups drifting upward."""
+    """Draw floating score popups drifting upward (cached sprites; the fade is the blit opacity)."""
+    from game import ui
     for ft in state.floating_texts:
         elapsed = state.current_time - ft.start_time
         progress = elapsed / FLOATING_TEXT_DURATION
         if progress >= 1:
             continue
-        alpha_q = round((1.0 - progress) * 8) / 8   # quantise → 8 alpha levels
         y_off = int(FLOATING_TEXT_SPEED * elapsed)
-        draw_arcade_text(frame, ft.text,
-                         int(ft.x), int(ft.y) - y_off,
-                         1.2, scale_color(ft.color, alpha_q), thickness=2)
+        ui.text(frame, ft.text, int(ft.x), int(ft.y) - y_off - 14, 32, ft.color, "center", "pixel",
+                opacity=1.0 - progress, shadow=True)
 
 
 def draw_combo(frame, state, theme):
@@ -526,13 +445,14 @@ def draw_combo(frame, state, theme):
     if not main_ball:
         return
 
-    alpha = max(0, 1.0 - elapsed / COMBO_DISPLAY_DURATION)
+    from game import ui
+    alpha = max(0.0, 1.0 - elapsed / COMBO_DISPLAY_DURATION)
     pulse = 1.0 + 0.15 * math.sin(state.current_time * 10)
+    size = 2 * round(13 * pulse)                       # 22-30 px in steps of 2: five cached sprites per number
     bx = min(max(int(main_ball.x) + 65, 80), WINDOW_WIDTH - 80)
     by = max(int(main_ball.y) - 35, 40)
-    draw_arcade_text(frame, f"x{state.combo_count}", bx, by,
-                     0.85 * pulse, scale_color(theme["score_popup"], alpha),
-                     thickness=2)
+    ui.text(frame, f"x{state.combo_count}", bx, by - 12, size, theme["score_popup"], "center", "pixel",
+            opacity=alpha, shadow=True)
 
 
 # ===================================================================

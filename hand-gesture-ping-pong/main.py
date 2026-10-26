@@ -4,6 +4,7 @@ An AR ping-pong game controlled by hand gestures via webcam.
 Run:  python main.py
 """
 
+import gc
 import os
 os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")  # before cv2 import
 
@@ -150,6 +151,7 @@ shown_state, state_entered = state.game_state, 0.0
 last_mouse_pos, last_mouse_move, last_click = (-1, -1), 0.0, None
 last_time = time.monotonic()
 frame_count = 0
+diag_next, diag_args = 0.0, (0, None, "")
 fps_display = 0
 fps_update_time = time.monotonic()
 
@@ -193,6 +195,10 @@ def _recover_from_screen_error(where):
 # background hand-tracking thread, close the mixer) always runs — even if
 # the loop exits via an unexpected exception, a Ctrl+C in the terminal, or
 # anything else besides the normal `break` paths below.
+gc.collect()
+gc.freeze()                       # start-up objects never need scanning again
+gc.set_threshold(50000, 50, 100)  # far fewer collections, so no 40 ms pauses mid-rally
+
 try:
     while True:
         # Input first: it also keeps the window responsive
@@ -338,8 +344,10 @@ try:
         ui.fade_in(frame, current_time - state_entered)
 
         renderer.apply_post_processing(frame, post_overlay)
-        hud.draw_global_hud(frame, fps_display, camera.label if camera.ok else None,
-                                 tracker.stats_text())
+        if current_time >= diag_next:                      # twice a second: a changing string is a fresh text sprite
+            diag_args = (fps_display, camera.label if camera.ok else None, tracker.stats_text())
+            diag_next = current_time + 0.5
+        hud.draw_global_hud(frame, *diag_args)
         if current_time < camera_toast_until:
             hud.draw_toast(frame, camera_toast)
         if not state.camera_ok:

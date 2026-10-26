@@ -58,6 +58,16 @@ class _OneEuroFilter:
         return self.x
 
 
+def _raise_thread_priority():
+    """Give the detection thread a little more priority than the render loop, so a busy frame cannot
+    delay the hand position it is about to use (Windows only; harmless elsewhere)."""
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.SetThreadPriority(k32.GetCurrentThread(), 1)          # THREAD_PRIORITY_ABOVE_NORMAL
+    except (AttributeError, OSError, ImportError):
+        pass
+
 class HandTracker:
     """Background-threaded hand-position and gesture detector."""
 
@@ -231,6 +241,7 @@ class HandTracker:
 
     def _detection_loop(self):
         """Background detection loop."""
+        _raise_thread_priority()
         while self._running:
             with self._lock:
                 item = self._frame

@@ -2255,6 +2255,40 @@ check("the leaderboard subtitle shows the length", not np.array_equal(_fr83, _fr
 (_hist.EVENT_FILE, st_mod.SETTINGS_FILE) = _o83; st_mod._event_overrides.clear()
 gfx.set_k(80)
 
+
+# ================== SMOOTHNESS: no per-frame text rebuilds, no GC hitches, tracker thread priority ============
+from game import ui as _ui87
+gfx.set_k(80); _w, _h = gfx.frame_size()
+_cs = GameState(); _cs.settings.update(ai_enabled=False); _cs.game_state = "PLAYING"; _cs.combo_count = 7
+_cs.combo_display_time = 100.0; engine.reset_ball(_cs); _cs.balls[0].x, _cs.balls[0].y = 500, 300
+_th87 = get_theme(_cs.settings); _frm = np.zeros((_h, _w, 3), np.uint8)
+_rend.draw_combo(_frm, _cs, _th87)                       # warm the cache
+_before = len(_ui87._cache)
+_n_new = []
+for _i in range(90):                                     # 1.5 s of combo animation: pulse + fade
+    _cs.current_time = 100.0 + _i / 60
+    _rend.draw_combo(_frm, _cs, _th87)
+check("the combo counter animates without building new text sprites every frame (<= 6 in 90 frames)",
+      len(_ui87._cache) - _before <= 6)
+_cs.combo_count = 0
+from game.state import FloatingText as _FT87
+_cs.floating_texts = [_FT87(400, 300, "+1", (0, 255, 255), 100.0)]
+_rend.draw_floating_texts(_frm, _cs); _b2 = len(_ui87._cache)
+for _i in range(40):
+    _cs.current_time = 100.0 + _i / 60
+    _rend.draw_floating_texts(_frm, _cs)
+check("the floating +1 fades and rises with no new sprite per frame", len(_ui87._cache) - _b2 == 0)
+check("the combo and the +1 are really drawn", _frm.any())
+check("the old per-frame text renderer is gone (no draw_arcade_text)", not hasattr(_rend, "draw_arcade_text"))
+_main_src = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
+check("main freezes start-up objects out of the garbage collector and raises its thresholds",
+      "gc.freeze()" in _main_src and "gc.set_threshold(" in _main_src)
+check("the diagnostics line is refreshed twice a second, not every frame", "diag_next" in _main_src)
+from game import hand_tracking as _ht87
+check("the detection thread raises its own priority (Windows; a no-op elsewhere)", callable(_ht87._raise_thread_priority))
+_ht87._raise_thread_priority()                           # must never raise
+gfx.set_k(80)
+
 print(f"\n{check.total - len(check.failures)}/{check.total} checks passed")
 print("ALL PASSED" if not check.failed else "SOME FAILED")
 sys.exit(1 if check.failed else 0)
