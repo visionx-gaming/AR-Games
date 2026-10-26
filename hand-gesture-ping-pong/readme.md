@@ -29,6 +29,7 @@ venv\Scripts\pip install -r requirements.txt
 | `--finals` | Start on the finals bracket |
 | `--restart-finals` | With `--finals`: throw away the saved bracket and build a new one |
 | `--attempts N` | Qualifier attempts per person (default 1) |
+| `--time SECONDS` | Game length of Time Attack / the qualifier, 15-300 s (this run only; default is the saved setting, 60) |
 | `--difficulty easy\|medium\|hard` | CPU difficulty for tournament runs (default medium; from the menu it uses your Settings) |
 | `--no-camera-feed` | Hide the camera picture for this run (tracking still works) |
 | `--no-fist-pause` | Kept for compatibility: the two-fists pause gesture is off by default |
@@ -49,10 +50,13 @@ to start. With two players, the left hand on screen is player 1.
 | `P` / `R` | Pause / resume |
 | `ESC` | In-game menu (or exit confirmation on the main menu) |
 | `M` | Settings |
+| `H` | How to play (main menu and tournament screens) |
 | `F` | Fullscreen |
 | `C` | Switch camera |
 | `V` | Camera picture on / off (tracking keeps working) |
 | `Tab` | Cycle 2 players / CPU right / CPU left (main menu) |
+
+Colour themes: Neon, Retro, Ice, Fire and **Contrast** (a colour-blind-safe blue / orange / yellow set).
 
 Settings (gameplay, audio, display, camera) are saved in `settings.json`. Display and camera rows
 follow whatever monitors and cameras are attached (resolution, monitor, camera, quality, rescan).
@@ -68,8 +72,9 @@ follow whatever monitors and cameras are attached (resolution, monitor, camera, 
 
 **Qualifier** (`TOURNAMENT QUALIFIER` in the main menu, or `--event`)
 - Every player plays one 60-second Time Attack against the CPU (same settings for everyone, no
-  power-ups or obstacles). The organiser presses `Space`, the player types their name and presses `Enter`.
-- Ranking: best attempt by points scored minus conceded, then fewer conceded, then the longer rally.
+  power-ups or obstacles). The organiser presses `Space`, the player types their name, picks the side they want (LEFT or RIGHT: `Tab` / arrows / click, the CPU takes the other) and presses `Enter`.
+- Game length: `-` / `+` on the leaderboard change it in 15 s steps (15-300 s, saved), or use `--time N`, or Settings > Gameplay > TIME LIMIT while Time Attack is the selected mode. The CPU ramp scales with it.
+- Ranking: best attempt by points scored minus conceded, then fewer conceded, then the longer rally, then more returns (balls you hit back).
   Equal players share a rank. The leaderboard shows the top 10.
 - Every game is appended to `event_results.csv` (open it in Excel any time; if Excel has it locked, the
   game keeps the rows and writes them on the next game).
